@@ -721,15 +721,20 @@ function loadHistory(item, price) {
 
 function windowCard(label, w, buyPrice, livePrice) {
   if (!w) return '';
-  const profitCls = w.pct >= 2 ? 'pos' : w.pct >= 0 ? 'warn' : 'neg';
   const low_net = (w.low * 0.98).toFixed(2);
   const high_net = (w.high * 0.98).toFixed(2);
-  const avg_net = (w.avg * 0.98).toFixed(2);
+  const med_net = (w.avg * 0.98).toFixed(2);
+  let midRows = '<div class="row"><span class="label">Median sale (net 2%)</span><span class="val">$' + med_net + '</span></div>';
+  if (w.mean_sale != null && w.mean_sale !== undefined) {
+    midRows += '<div class="row"><span class="label">Mean sale (net 2%)</span><span class="val">$' + (w.mean_sale * 0.98).toFixed(2) + '</span></div>';
+  } else if (w.basis === 'graph') {
+    midRows += '<div class="row" style="font-size:11px;color:#7d8aa6;line-height:1.4">From daily graph buckets — prefer per-sale when API returns history.</div>';
+  }
   return '<div class="card"><h3>' + label + '</h3>' +
-    '<div class="row"><span class="label">Lowest sale</span><span class="val">$' + low_net + '</span></div>' +
-    '<div class="row"><span class="label">Highest sale</span><span class="val">$' + high_net + '</span></div>' +
-    '<div class="row"><span class="label">Avg (weighted)</span><span class="val">$' + avg_net + '</span></div>' +
-    (livePrice ? '<div class="row"><span class="label">Live</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
+    '<div class="row"><span class="label">Lowest sale (net 2%)</span><span class="val">$' + low_net + '</span></div>' +
+    '<div class="row"><span class="label">Highest sale (net 2%)</span><span class="val">$' + high_net + '</span></div>' +
+    midRows +
+    (livePrice ? '<div class="row"><span class="label">Live buy now</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
     '</div>';
 }
 

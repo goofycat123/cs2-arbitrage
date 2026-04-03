@@ -117,7 +117,7 @@ def _fetch_parsed_sales(market_hash_name: str) -> list:
             "https://csfloat.com/api/v1/history/sales",
             headers={"Authorization": FLOAT_API_KEY},
             params={"market_hash_name": market_hash_name},
-            timeout=20,
+            timeout=25,
         )
         if resp.status_code != 200:
             return []
@@ -128,15 +128,49 @@ def _fetch_parsed_sales(market_hash_name: str) -> list:
         return []
 
 
-def _sale_low_high_in_window(parsed: list, days: int) -> tuple[float, float] | None:
-    """True min/max sale price in the last `days` calendar days (not daily averages)."""
+def _window_stats_from_raw_sales(parsed: list, days: int) -> dict | None:
+    """
+    All numbers from individual CSFloat sales in the last `days` calendar days.
+    - low / high: actual cheapest & priciest sale
+    - median: typical trade (robust vs one-off sales)
+    - mean_sale: arithmetic mean of every sale in the window (literal average of trades)
+    `avg` is kept as median so profit/net_sell math matches the middle of real trades.
+    """
     if not parsed:
         return None
     cutoff = time.time() - days * 86400
-    prices = [p["price"] for p in parsed if p["ts"] >= cutoff]
+    prices = sorted(p["price"] for p in parsed if p["ts"] >= cutoff)
     if not prices:
         return None
-    return (round(min(prices), 2), round(max(prices), 2))
+    low = round(prices[0], 2)
+    high = round(prices[-1], 2)
+    med = round(statistics.median(prices), 2)
+    mean_s = round(sum(prices) / len(prices), 2)
+    return {
+        "avg": med,
+        "median": med,
+        "mean_sale": mean_s,
+        "low": low,
+        "high": high,
+        "sales": len(prices),
+        "days": days,
+        "basis": "sales",
+    }
+
+
+def _raw_sale_volatility_pct(parsed: list, days: int) -> float | None:
+    """Robust volatility % from individual sale prices (MAD vs median)."""
+    if not parsed or len(parsed) < 4:
+        return None
+    cutoff = time.time() - days * 86400
+    prices = [p["price"] for p in parsed if p["ts"] >= cutoff]
+    if len(prices) < 4:
+        return None
+    med = statistics.median(prices)
+    if med <= 0:
+        return 0.0
+    mad = statistics.median(abs(x - med) for x in prices)
+    return round((1.4826 * mad / med) * 100, 1)
 
 
 def _detect_collection(item_name: str) -> dict | None:
@@ -396,6 +430,10 @@ def run_analysis(
         return kept if len(kept) >= 3 else sales_days
 
     def wstats(days):
+        raw = _window_stats_from_raw_sales(parsed_sales, days)
+        if raw:
+            return raw
+        # Fallback: CSFloat graph is daily buckets only (no per-sale detail).
         s = data[:days]
         if not s:
             return None
@@ -403,28 +441,30 @@ def run_analysis(
         counts = [d["count"] for d in s]
         sales_days = _robust_sales_days(prices, counts)
         if sales_days:
-            # Volume-weighted avg to avoid single-day premium spikes.
             weight_sum = sum(c for _, c in sales_days)
             avg = sum(p * c for p, c in sales_days) / max(weight_sum, 1)
         else:
             avg = sum(prices) / len(prices)
-
-        # Low/High: prefer real individual sale prices in the window (CSFloat /history/sales).
-        # Graph points are daily *averages* — their min/max is NOT the cheapest sale that week.
-        ext = _sale_low_high_in_window(parsed_sales, days)
-        if ext:
-            low, high = ext[0], ext[1]
-        elif sales_days:
+        if sales_days:
             low = round(min(p for p, c in sales_days), 2)
             high = round(max(p for p, c in sales_days), 2)
         else:
             low = round(min(prices), 2)
             high = round(max(prices), 2)
-
-        return {"avg": round(avg, 2), "low": low, "high": high, "sales": sum(counts), "days": len(s)}
+        return {
+            "avg": round(avg, 2),
+            "median": round(avg, 2),
+            "low": low,
+            "high": high,
+            "sales": sum(counts),
+            "days": len(s),
+            "basis": "graph",
+        }
 
     w7, w30, w60 = wstats(7), wstats(30), wstats(60)
     liq = liquidity_score(w7, w30, w60)
+    sale_based = bool(parsed_sales)
+    stat_lbl = "median sale" if sale_based else "daily estimate"
 
     # Get marketplace listing count (only called on analyze)
     pm_context = _fetch_pricempire_context(search_name)
@@ -470,8 +510,7 @@ def run_analysis(
     low7 = w7["low"] if w7 else 0
 
     # --- Mathematical risk scoring ---
-    # Count dips using robust filtered days to avoid premium-print distortion.
-    def _count_dips(days: int) -> int:
+    def _count_dips_graph(days: int) -> int:
         subset = data[:days]
         if not subset:
             return 0
@@ -482,12 +521,23 @@ def run_analysis(
             return 0
         return sum(1 for p, _ in robust if p < buy_price)
 
-    dips_7d = _count_dips(7)
-    dips_30d = _count_dips(30)
+    def _count_dips_sales(days: int) -> int:
+        cutoff = time.time() - days * 86400
+        return sum(1 for p in parsed_sales if p["ts"] >= cutoff and p["price"] < buy_price)
+
+    if parsed_sales:
+        dips_7d = _count_dips_sales(7)
+        dips_30d = _count_dips_sales(30)
+    else:
+        dips_7d = _count_dips_graph(7)
+        dips_30d = _count_dips_graph(30)
+
     days_30 = min(len(data), 30)
 
-    # Price volatility (robust MAD-based % over filtered 30d sales)
-    if w30 and days_30 > 1:
+    if parsed_sales:
+        v = _raw_sale_volatility_pct(parsed_sales, 30)
+        volatility = v if v is not None else 0.0
+    elif w30 and days_30 > 1:
         prices_30 = [d["avg_price"] / 100 for d in data[:30]]
         counts_30 = [d["count"] for d in data[:30]]
         robust_30 = _robust_sales_days(prices_30, counts_30)
@@ -498,7 +548,6 @@ def run_analysis(
             med = statistics.median(expanded_prices)
             abs_dev = [abs(p - med) for p in expanded_prices]
             mad = statistics.median(abs_dev)
-            # Convert MAD to robust sigma-equivalent and normalize as percent.
             robust_sigma = 1.4826 * mad
             volatility = round((robust_sigma / med) * 100, 1) if med > 0 else 0
         else:
@@ -506,8 +555,16 @@ def run_analysis(
     else:
         volatility = 0
 
-    # Drop probability: % of days in last 30d where price was below buy
-    drop_prob = round((dips_30d / days_30) * 100, 1) if days_30 > 0 else 0
+    if parsed_sales:
+        c30 = time.time() - 30 * 86400
+        in_30 = [p for p in parsed_sales if p["ts"] >= c30]
+        if in_30:
+            below = sum(1 for p in in_30 if p["price"] < buy_price)
+            drop_prob = round(100 * below / len(in_30), 1)
+        else:
+            drop_prob = 0.0
+    else:
+        drop_prob = round((dips_30d / days_30) * 100, 1) if days_30 > 0 else 0
 
     # Composite profit score using multiple sources
     profit_scores = []
@@ -564,17 +621,20 @@ def run_analysis(
     if w30:
         w30_pct_r = round((w30["avg"] * 0.98 - buy_price) / buy_price * 100, 1)
         if w30_pct_r >= 5:
-            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — market consistently supports this price.")
+            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} net ~${w30['avg'] * 0.98:.0f} after 2% fee = +{w30_pct_r}% vs buy — market supports this level.")
         elif w30_pct_r >= 2:
-            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — thin but positive margin historically.")
+            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} = +{w30_pct_r}% vs buy — thin margin.")
         else:
-            lines.append(f"30d avg ${w30['avg']:.0f} = {w30_pct_r:+}% — historically barely profitable or losing at this buy.")
+            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} = {w30_pct_r:+}% vs buy — tight or negative at this entry.")
 
     # 3. Risk factors
     if pump > 15:
-        lines.append(f"Price is PUMPED {pump:.0f}% above 30d avg — highly likely to correct during your 7d lock.")
+        lines.append(f"7d vs 30d {stat_lbl}: +{pump:.0f}% — short window trading above the longer norm, correction risk.")
     if dips_7d > 0:
-        lines.append(f"Price dipped below your buy {dips_7d}x in the last 7 days ({drop_prob}% drop chance over 30d).")
+        if sale_based:
+            lines.append(f"{dips_7d} individual sales in the last 7d below your buy; {drop_prob}% of last-30d sales also below buy.")
+        else:
+            lines.append(f"{dips_7d} days in the last 7d had avg below your buy; ~{drop_prob}% of last-30d days below buy (graph estimate).")
     if volatility > 12:
         lines.append(f"Very volatile ({volatility}%) — hard to predict where it lands after 7d lock.")
     elif volatility > 6:
@@ -606,35 +666,35 @@ def run_analysis(
         target = round(w30["avg"] * 0.98 / 1.04, 0)
         lines.append(f"Wait for live price to rise, or buy below ${target:.0f} for adequate buffer.")
     elif verdict == "SKIP" and pump > 15:
-        lines.append(f"Wait for pump to cool — 30d avg ${w30['avg']:.0f} is the real floor to target.")
+        lines.append(f"Wait for pump to cool — 30d {stat_lbl} ${w30['avg']:.0f} is a saner reference.")
 
     verdict_detail = " ".join(lines) if lines else f"Avg profit {real_pct}% across {sources_str}."
 
     # Trend analysis
     trend_notes = []
 
-    # 7d vs 30d momentum
+    # 7d vs 30d momentum (median of real sales when available)
     if pump > 15:
-        trend_notes.append({"text": f"7d avg is +{pump}% above 30d avg — PUMPED, price inflated", "type": "danger"})
+        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: +{pump}% — short window inflated vs longer norm", "type": "danger"})
     elif pump > 5:
-        trend_notes.append({"text": f"7d avg is +{pump}% above 30d avg — rising, watch for correction", "type": "warn"})
+        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: +{pump}% — rising, watch for correction", "type": "warn"})
     elif pump < -10:
-        trend_notes.append({"text": f"7d avg is {pump}% below 30d avg — DROPPING fast", "type": "danger"})
+        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {pump}% — dropping fast", "type": "danger"})
     elif pump < -3:
-        trend_notes.append({"text": f"7d avg is {pump}% below 30d avg — declining slowly", "type": "warn"})
+        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {pump}% — drifting down", "type": "warn"})
     else:
-        trend_notes.append({"text": f"7d vs 30d: {'+' if pump > 0 else ''}{pump}% — price stable", "type": "safe"})
+        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {'+' if pump > 0 else ''}{pump}% — stable", "type": "safe"})
 
-    # 60d long-term direction
+    # 60d long-term direction (median sales)
     if drop_60to7 is not None:
         if drop_60to7 < -15:
-            trend_notes.append({"text": f"60d trend: {drop_60to7}% — major decline, possible new supply or case drop", "type": "danger"})
+            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {drop_60to7}% — major decline vs 2mo norm", "type": "danger"})
         elif drop_60to7 < -5:
-            trend_notes.append({"text": f"60d trend: {drop_60to7}% — downward over 2 months", "type": "warn"})
+            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {drop_60to7}% — softer than 2mo norm", "type": "warn"})
         elif drop_60to7 > 10:
-            trend_notes.append({"text": f"60d trend: +{drop_60to7}% — strong uptrend over 2 months", "type": "safe"})
+            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: +{drop_60to7}% — strong vs 2mo norm", "type": "safe"})
         else:
-            trend_notes.append({"text": f"60d trend: {'+' if drop_60to7 > 0 else ''}{drop_60to7}% — flat long-term", "type": "safe"})
+            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {'+' if drop_60to7 > 0 else ''}{drop_60to7}% — in line long-term", "type": "safe"})
 
     # Volume change
     if w7 and w30 and w30["sales"] > 0:
@@ -691,8 +751,19 @@ def run_analysis(
                 "type": "info",
             })
 
-    # Chart data (last 60 days)
+    # Chart: daily CSFloat graph buckets (visual trend only — cards use per-sale stats when available)
     chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:60]]
+
+    if sale_based:
+        trend_notes.insert(0, {
+            "text": "7d / 30d / 60d numbers = real CSFloat sales (low, high, median + mean of trades). Chart = daily graph.",
+            "type": "info",
+        })
+    else:
+        trend_notes.insert(0, {
+            "text": "No per-sale history returned — windows use daily graph buckets (less precise for tight margins).",
+            "type": "warn",
+        })
 
     return {
         "item": item_name, "buy_price": buy_price,
@@ -703,4 +774,5 @@ def run_analysis(
         "dips_7d": dips_7d, "dips_30d": dips_30d,
         "verdict": verdict, "verdict_detail": verdict_detail,
         "empire": empire,
+        "stats_basis": "sales" if sale_based else "graph",
     }
