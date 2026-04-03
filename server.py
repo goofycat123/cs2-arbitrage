@@ -32,6 +32,16 @@ def search_items(q: str = ""):
     if len(q) < 2:
         return {"results": []}
 
+    # Official Skinport catalog (no API key). Large cached snapshot — see skinport_catalog.py.
+    try:
+        from skinport_catalog import search_items as skinport_search
+
+        matches = skinport_search(q, 15)
+        if matches:
+            return {"results": matches, "search_source": "skinport"}
+    except Exception:
+        pass
+
     from config import PRICEMPIRE_API_KEY
     from rate_limiter import wait_if_needed
 
@@ -48,10 +58,9 @@ def search_items(q: str = ""):
         if resp.status_code == 200:
             data = resp.json()
             results = data.get("results", [])
-            # Convert to our format - Pricempire uses market_hash_name
             matches = [{"name": r.get("market_hash_name", ""), "price": 0} for r in results[:15] if r.get("market_hash_name")]
-            return {"results": matches}
-    except Exception as e:
+            return {"results": matches, "search_source": "pricempire"}
+    except Exception:
         pass
 
     return {"results": []}
@@ -103,20 +112,27 @@ async def arbitrage_scan(
     per_page: int = 200,
     # Extra CSFloat history calls to determine volatility.
     check_volatile: bool = False,
-    # Hard cap on how many Empire items we will query CSFloat for in a single scan.
-    # This is how we stay usable under CSFloat rate limits.
+    # Hard cap on how many source rows we will query CSFloat for in a single scan.
     max_items: int = 25,
-    # Arbitrage direction.
+    # empire_to_float | float_to_empire | skinport_to_float (official Skinport catalog, no key).
     direction: str = "empire_to_float",
+    # Skinport-only: minimum concurrent listings on Skinport (quantity field from their API).
+    min_source_listings: int = 2,
 ):
     # Prefer config env var names, but keep backward compatibility with older env var names.
     empire_api_key = CSGOEMPIRE_API_KEY or os.getenv("EMPIRE_API_KEY")
     csfloat_api_key = FLOAT_API_KEY or os.getenv("CSFLOAT_API_KEY")
 
+    direction_l = (direction or "").lower().strip()
+    is_skinport = direction_l == "skinport_to_float"
+
     meta = {
-        "keys_present": bool(empire_api_key and csfloat_api_key),
+        "keys_present": bool(csfloat_api_key)
+        if is_skinport
+        else bool(empire_api_key and csfloat_api_key),
+        "buy_venue": "skinport" if is_skinport else "empire",
         "source": source,
-        "direction": direction,
+        "direction": direction_l,
         "pages": pages,
         "per_page": per_page,
         "min_price": min_price,
@@ -124,7 +140,9 @@ async def arbitrage_scan(
         "float_min": float_min,
         "float_max": float_max,
         "check_volatile": check_volatile,
+        "min_source_listings": max(1, int(min_source_listings)),
         "empire_items_fetched": 0,
+        "skinport_candidates": 0,
         "csfloat_listings_found": 0,
         "csfloat_items_enqueued": 0,
         "profitable_pre_margin": 0,
@@ -225,7 +243,7 @@ async def arbitrage_scan(
                         empire_usd = _empire_price_to_usd(empire_minor)
                         csfloat_usd = _csfloat_price_to_usd(listing_price)
 
-                        if direction == "float_to_empire":
+                        if direction_l == "float_to_empire":
                             buy_price = csfloat_usd
                             csfloat_net = csfloat_usd  # for display consistency
                             sell_price = empire_usd * (1 - FEES["empire_buy"])
@@ -259,6 +277,7 @@ async def arbitrage_scan(
                                 if listing_id
                                 else f"https://csfloat.com/search?market_hash_name={encoded}"
                             ),
+                            "source_url": None,
                         }
                         results.append(entry)
 
@@ -410,24 +429,110 @@ async def arbitrage_scan(
             pass
         return avg_7d
 
+    async def scan_skinport_to_float() -> list[dict]:
+        """Buy at Skinport min_price (official /v1/items), sell on CSFloat after 2% fee."""
+        from skinport_catalog import candidates_for_arbitrage, wear_from_market_hash
+
+        out: list[dict] = []
+        cand = await asyncio.to_thread(
+            lambda: candidates_for_arbitrage(
+                min_price=min_price or 0.0,
+                max_price=max_price if max_price and max_price > 0 else 1e9,
+                min_listings=meta["min_source_listings"],
+                max_candidates=5000,
+            )
+        )
+        meta["skinport_candidates"] = len(cand)
+
+        async with httpx.AsyncClient(timeout=20) as client:
+            to_volatile: list[tuple[dict, int | float, str]] = []
+            for row in cand:
+                if meta["csfloat_items_enqueued"] >= max_items:
+                    break
+                name = row.get("market_hash_name")
+                if not name:
+                    continue
+                try:
+                    buy_usd = float(row.get("min_price") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if buy_usd <= 0:
+                    continue
+
+                encoded = quote(name)
+                meta["csfloat_items_enqueued"] += 1
+                listing_price, listing_id = await fetch_csfloat_listing_price(client, name)
+                if listing_price is None:
+                    continue
+
+                csfloat_usd = _csfloat_price_to_usd(listing_price)
+                sell_price = csfloat_usd * (1 - FEES["float_sell"])
+                net_profit = sell_price - buy_usd
+                margin_pct = (net_profit / buy_usd) * 100 if buy_usd else 0
+                if net_profit <= 0:
+                    continue
+
+                meta["profitable_pre_margin"] += 1
+                sp_url = row.get("item_page") or ""
+                entry = {
+                    "name": name,
+                    "wear": wear_from_market_hash(name),
+                    "empire_usd": round(buy_usd, 2),
+                    "csfloat_floor": round(csfloat_usd, 2),
+                    "csfloat_net": round(sell_price, 2),
+                    "net_profit": round(net_profit, 2),
+                    "margin_pct": round(margin_pct, 2),
+                    "volatile": False,
+                    "source_url": sp_url,
+                    "csfloat_url": (
+                        f"https://csfloat.com/item/{listing_id}"
+                        if listing_id
+                        else f"https://csfloat.com/search?market_hash_name={encoded}"
+                    ),
+                }
+                out.append(entry)
+                if check_volatile:
+                    to_volatile.append((entry, listing_price, encoded))
+
+            if check_volatile and to_volatile:
+                avg_tasks = [
+                    asyncio.create_task(fetch_csfloat_avg7d(client, enc))
+                    for _, _, enc in to_volatile
+                ]
+                avg_values = await asyncio.gather(*avg_tasks, return_exceptions=True)
+                for (entry, listing_price, _enc), avg_7d in zip(to_volatile, avg_values):
+                    try:
+                        if isinstance(avg_7d, Exception) or avg_7d is None or avg_7d <= 0:
+                            continue
+                        diff_pct = abs(listing_price - avg_7d) / avg_7d * 100
+                        if diff_pct > 5:
+                            entry["volatile"] = True
+                            meta["volatile_true"] += 1
+                    except Exception:
+                        pass
+
+        return out
+
     # Decide which sources to scan.
     results: list[dict] = []
     src = (source or "").lower().strip()
-    direction = (direction or "").lower().strip()
 
     # Per-scan throttle for CSFloat listing calls.
-    # Prevents global rate limiter state from stalling arbitrage scans.
     float_limit = RATE_LIMITS.get("float", 10)
     float_window = 60.0
     float_call_times: list[float] = []
-    if src in {"both"}:
-        results.extend(await scan_one("no"))
-        results.extend(await scan_one("yes"))
+
+    if is_skinport:
+        results.extend(await scan_skinport_to_float())
     else:
-        auction_param = _source_to_auction_param(src)
-        if not auction_param:
-            return {"results": [], "meta": meta}
-        results.extend(await scan_one(auction_param))
+        if src in {"both"}:
+            results.extend(await scan_one("no"))
+            results.extend(await scan_one("yes"))
+        else:
+            auction_param = _source_to_auction_param(src)
+            if not auction_param:
+                return {"results": [], "meta": meta}
+            results.extend(await scan_one(auction_param))
 
     results.sort(key=lambda x: x["margin_pct"], reverse=True)
     return {"results": results, "meta": meta}

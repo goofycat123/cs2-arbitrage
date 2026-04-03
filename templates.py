@@ -164,12 +164,12 @@ tr:hover td{background:#161b2288}
       </table>
       <div class="es" id="es">
         <div class="icon">&#128269;</div>
-        <p>Set filters and hit <strong>Scan Now</strong>. Buys on Empire below CSFloat true value, checks trend stability, pump detection, and liquidity.</p>
+        <p>Set filters and hit <strong>Scan Now</strong>. Compare Empire or free Skinport catalog prices to CSFloat listings (official APIs only).</p>
       </div>
     </div>
 
     <div class="lp" id="lp">
-      <div class="le scan"><span class="t">[--:--:--]</span> Ready. Empire &#8594; CSFloat arbitrage scanner.</div>
+      <div class="le scan"><span class="t">[--:--:--]</span> Ready. Empire / Skinport &#8594; CSFloat scanner.</div>
     </div>
   </div>
 </div>
@@ -646,9 +646,10 @@ h1{
           <option value="both">Both</option>
         </select>
         <label for="arbDirection">Direction</label>
-        <select id="arbDirection" style="width:155px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none">
+        <select id="arbDirection" style="width:170px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none" onchange="onArbDirectionChange()">
           <option value="empire_to_float" selected>Empire -> CSFloat</option>
           <option value="float_to_empire">CSFloat -> Empire</option>
+          <option value="skinport_to_float">Skinport -> CSFloat</option>
         </select>
         <label for="arbPages">Pages</label>
         <select id="arbPages" style="width:90px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none">
@@ -669,6 +670,8 @@ h1{
         <input type="number" id="arbFloatMax" placeholder="" step="0.0001" min="0" max="1">
         <label for="arbCheckVol">Volatile 7d</label>
         <input type="checkbox" id="arbCheckVol">
+        <label for="arbMinSkinQty" id="arbMinSkinQtyLbl" style="display:none">Min Skinport qty</label>
+        <input type="number" id="arbMinSkinQty" value="2" min="1" step="1" style="display:none;width:56px">
       </div>
       <div class="arb-count" id="arbCount" style="display:none"></div>
     </div>
@@ -679,7 +682,7 @@ h1{
             <th>#</th>
             <th>Item Name</th>
             <th>Wear</th>
-            <th>Empire Listed</th>
+            <th id="arbColBuy">Buy (Empire)</th>
             <th>CSFloat Listed</th>
             <th>Net Profit</th>
             <th>Margin %</th>
@@ -689,7 +692,7 @@ h1{
         </thead>
         <tbody id="arbTbody"></tbody>
       </table>
-      <div class="arb-empty" id="arbEmpty">Hit <strong>Scan Now</strong> to fetch live Empire listings and compare against CSFloat prices.</div>
+      <div class="arb-empty" id="arbEmpty">Hit <strong>Scan Now</strong>. Empire or official Skinport catalog vs CSFloat (needs CSFloat API key; Empire needs Empire key).</div>
     </div>
   </div><!-- end tab-arbitrage -->
 
@@ -1228,6 +1231,25 @@ function switchTab(name, btn) {
 let arbResults = [];
 let arbMeta = null;
 
+function onArbDirectionChange() {
+  const d = document.getElementById('arbDirection').value;
+  const src = document.getElementById('arbSource');
+  const lbl = document.getElementById('arbColBuy');
+  const qLbl = document.getElementById('arbMinSkinQtyLbl');
+  const qIn = document.getElementById('arbMinSkinQty');
+  if (d === 'skinport_to_float') {
+    if (src) src.disabled = true;
+    if (lbl) lbl.textContent = 'Buy (Skinport min)';
+    if (qLbl) qLbl.style.display = '';
+    if (qIn) qIn.style.display = '';
+  } else {
+    if (src) src.disabled = false;
+    if (lbl) lbl.textContent = 'Buy (Empire)';
+    if (qLbl) qLbl.style.display = 'none';
+    if (qIn) qIn.style.display = 'none';
+  }
+}
+
 function goToAnalyzer() {
   // Switch tabs without needing a button reference.
   const analyzerBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => {
@@ -1261,10 +1283,14 @@ async function arbScan() {
   spinner.style.display = 'block';
   countEl.style.display = 'none';
   document.getElementById('arbEmpty').style.display = 'block';
-  document.getElementById('arbEmpty').textContent = 'Scanning Empire and CSFloat... this may take 30-60 seconds.';
+  const dirV = document.getElementById('arbDirection').value;
+  document.getElementById('arbEmpty').textContent = dirV === 'skinport_to_float'
+    ? 'Skinport catalog (cached) + CSFloat listing checks... first run may download ~10MB catalog.'
+    : 'Scanning Empire and CSFloat... this may take 30-60 seconds.';
   document.getElementById('arbTbody').innerHTML = '';
 
   try {
+    const dirV = document.getElementById('arbDirection').value;
     const getOptFloat = (id) => {
       const v = document.getElementById(id).value.trim();
       if (!v) return null;
@@ -1274,7 +1300,7 @@ async function arbScan() {
 
     const params = new URLSearchParams();
     params.set('source', document.getElementById('arbSource').value);
-    params.set('direction', document.getElementById('arbDirection').value);
+    params.set('direction', dirV);
     params.set('pages', document.getElementById('arbPages').value);
     // CSFloat is strict on rate limits; keep request count very modest.
     const maxItems = (document.getElementById('arbPages').value === '1') ? 5 : 10;
@@ -1289,6 +1315,11 @@ async function arbScan() {
 
     const checkVol = document.getElementById('arbCheckVol').checked ? 'true' : 'false';
     params.set('check_volatile', checkVol);
+
+    if (dirV === 'skinport_to_float') {
+      const mq = parseInt(document.getElementById('arbMinSkinQty').value, 10);
+      params.set('min_source_listings', Number.isFinite(mq) && mq >= 1 ? mq : 2);
+    }
 
     const resp = await fetch('/api/arbitrage?' + params.toString());
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -1315,13 +1346,19 @@ function renderArbTable() {
     tbody.innerHTML = '';
     empty.style.display = 'block';
     if (arbMeta && !arbMeta.keys_present) {
-      empty.textContent = 'CSGOEmpire/CSFloat API keys missing (backend returned 0 results).';
-    } else if (arbMeta && arbMeta.empire_items_fetched === 0) {
+      empty.textContent = arbMeta.direction === 'skinport_to_float'
+        ? 'CSFloat API key missing (FLOAT_API_KEY / CSFLOAT_API_KEY). Skinport catalog needs no key.'
+        : 'CSGOEmpire/CSFloat API keys missing (backend returned 0 results).';
+    } else if (arbMeta && arbMeta.direction === 'skinport_to_float' && arbMeta.skinport_candidates === 0) {
+      empty.textContent = 'No Skinport rows matched price/qty/blacklist filters. Widen $ range or lower Min Skinport qty.';
+    } else if (arbMeta && arbMeta.empire_items_fetched === 0 && arbMeta.direction !== 'skinport_to_float') {
       empty.textContent = 'CSGOEmpire returned 0 items for this scan (try Pages=3, or change Source).';
       } else if (arbMeta && arbMeta.csfloat_listings_found === 0 && arbMeta.csfloat_items_enqueued > 0) {
         empty.textContent = 'CSFloat rate-limited or returning no listings right now. Wait ~60s and scan again.';
     } else if (arbMeta && arbMeta.profitable_pre_margin === 0) {
-      empty.textContent = 'No profitable matches. Empire items scanned: ' + arbMeta.empire_items_fetched + '.';
+      empty.textContent = arbMeta.direction === 'skinport_to_float'
+        ? ('No profitable Skinport->Float matches. Skinport rows checked: ' + arbMeta.csfloat_items_enqueued + '.')
+        : ('No profitable matches. Empire items scanned: ' + arbMeta.empire_items_fetched + '.');
     } else if (arbResults.length) {
       empty.textContent = 'No items meet the minimum margin filter (' + minMargin + '%). Found ' + arbResults.length + ' total profitable items before filter.';
     } else {
@@ -1341,8 +1378,11 @@ function renderArbTable() {
       ? '<span class="arb-margin-hi">+' + r.margin_pct.toFixed(2) + '%</span>'
       : '<span class="arb-margin-md">+' + r.margin_pct.toFixed(2) + '%</span>';
     const volatileBadge = r.volatile ? '<span class="arb-volatile">Volatile</span>' : '<span style="color:#333;font-size:11px">&#8212;</span>';
-    const itemUrl = 'https://csfloat.com/search?market_hash_name=' + encodeURIComponent(r.name);
     const nameArg = JSON.stringify(r.name);
+    const scanDir = arbMeta && arbMeta.direction ? arbMeta.direction : '';
+    const linkCell = (scanDir === 'skinport_to_float' && r.source_url)
+      ? '<a href="' + r.source_url + '" target="_blank" class="arb-link">Skinport</a> &middot; <a href="' + r.csfloat_url + '" target="_blank" class="arb-link">Float</a>'
+      : '<a href="' + r.csfloat_url + '" target="_blank" class="arb-link">CSFloat</a>';
     return '<tr' + rowCls + '>' +
       '<td style="color:#444">' + (i + 1) + '</td>' +
       '<td><a href="#" style="color:#aaa;text-decoration:none;transition:color .15s" onclick="analyzeFromArb(' + nameArg + ',' + r.empire_usd + ',' + r.csfloat_floor + '); return false;">' + r.name + '</a></td>' +
@@ -1352,9 +1392,15 @@ function renderArbTable() {
       '<td class="arb-profit-pos">+$' + r.net_profit.toFixed(2) + '</td>' +
       '<td>' + marginBadge + '</td>' +
       '<td>' + volatileBadge + '</td>' +
-      '<td><a href="' + r.csfloat_url + '" target="_blank" class="arb-link">Buy on Float &#8599;</a></td>' +
+      '<td>' + linkCell + '</td>' +
       '</tr>';
   }).join('');
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('arbDirection')) onArbDirectionChange();
+  });
 }
 
 document.getElementById('arbMinMargin').addEventListener('input', function() {
