@@ -618,7 +618,6 @@ h1{
           <div><span style="color:#c55">DROPPING (-10%)</span> — falling fast, new supply?</div>
           <div><span style="color:#c93">Rising/Declining</span> — moderate movement</div>
           <div><span style="color:#4a9">Stable</span> — safe to flip within 7d lock</div>
-          <div><span style="color:#c93">FOMO window</span> — recent official CS2 update/news can create temporary hype</div>
           <div><span style="color:#c93">Market feed stale/degraded</span> — Pricempire/CSFloat freshness issues reduce confidence</div>
           <div style="margin-top:6px;color:#aaa;font-weight:600">Verdict</div>
           <div><span style="color:#4a9">BUY</span> — net margin, stable trend, and acceptable liquidity</div>

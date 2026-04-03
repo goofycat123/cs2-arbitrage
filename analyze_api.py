@@ -293,50 +293,6 @@ def _fetch_pricempire_context(item_name: str) -> dict | None:
         return None
 
 
-def _fetch_cs2_market_context() -> dict | None:
-    """Fetch latest official CS2 update headlines to flag fresh-update FOMO windows."""
-    try:
-        resp = httpx.get(
-            "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/",
-            params={"appid": 730, "count": 6, "maxlength": 220, "format": "json"},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return None
-
-        items = resp.json().get("appnews", {}).get("newsitems", [])
-        if not items:
-            return None
-
-        now_ts = datetime.now(timezone.utc).timestamp()
-        latest = items[0]
-        latest_age_hours = round((now_ts - latest.get("date", now_ts)) / 3600, 1)
-        titles = [str(n.get("title", "")) for n in items]
-        joined = " | ".join(titles).lower()
-
-        fomo_terms = [
-            "case",
-            "capsule",
-            "sticker",
-            "armory",
-            "collection",
-            "major",
-            "operation",
-            "update",
-            "release notes",
-            "patch notes",
-        ]
-        has_fomo_catalyst = any(t in joined for t in fomo_terms)
-
-        return {
-            "latest_title": latest.get("title", "CS2 update"),
-            "latest_age_hours": latest_age_hours,
-            "has_fomo_catalyst": has_fomo_catalyst,
-        }
-    except Exception:
-        return None
-
-
 def run_analysis(
     item_name: str,
     buy_price: float,
@@ -477,8 +433,6 @@ def run_analysis(
         csfloat_down = "csfloat" in pm_context.get("degraded_markets", [])
         csfloat_stale = bool(pm_context.get("csfloat_stale"))
         csfloat_age_h = pm_context.get("csfloat_last_updated_hours")
-
-    cs2_ctx = _fetch_cs2_market_context()
 
     # Empire live listings for direct comparison
     empire = _fetch_empire_listings(search_name)
@@ -734,22 +688,6 @@ def run_analysis(
             trend_notes.append({"text": f"Collection: {coll['name']} — {coll['note']}, supply limited", "type": "safe"})
         else:
             trend_notes.append({"text": f"Collection: {coll['name']} — {coll['note']}", "type": "info"})
-
-    # Official CS2 update context (possible FOMO catalyst window).
-    if cs2_ctx:
-        age_h = cs2_ctx.get("latest_age_hours")
-        title = cs2_ctx.get("latest_title", "Recent CS2 update")
-        fomo = cs2_ctx.get("has_fomo_catalyst")
-        if age_h is not None and age_h <= 72 and fomo:
-            trend_notes.append({
-                "text": f"Recent official CS2 update ({age_h}h): \"{title}\" — elevated hype/FOMO risk on affected items",
-                "type": "warn",
-            })
-        elif age_h is not None and age_h <= 72:
-            trend_notes.append({
-                "text": f"Recent official CS2 post ({age_h}h): \"{title}\" — monitor short-term volatility",
-                "type": "info",
-            })
 
     # Chart: daily CSFloat graph buckets (visual trend only — cards use per-sale stats when available)
     chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:60]]
