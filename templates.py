@@ -197,7 +197,7 @@ async function triggerScan(){
   const f=getFilters();
   addLog('$'+f.min_price+'-$'+f.max_price+' | ROI '+f.min_roi+'%+ | Min '+f.min_volume+' sales/7d','scan');
   try{
-    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filters:f})});
+    const r=await fetch('/api/scan',{credentials:'same-origin',method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filters:f})});
     const d=await r.json();
     addLog('Done. <strong>'+d.found+'</strong> opportunities found.',d.found>0?'found':'scan');
     await fetchResults();
@@ -206,7 +206,7 @@ async function triggerScan(){
 
 async function fetchResults(){
   try{
-    const r=await fetch('/api/results');
+    const r=await fetch('/api/results',{credentials:'same-origin'});
     const d=await r.json();
     setStatus(d.scanning?'scanning':d.results.length>0?'active':'idle');
     document.getElementById('cnt').textContent=d.results.length;
@@ -513,7 +513,10 @@ h1{
 </head>
 <body>
 <div class="container">
-  <h1>CS2 Skin Analyzer</h1>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:4px;flex-wrap:wrap">
+    <h1 style="margin:0">CS2 Skin Analyzer</h1>
+    <a href="/logout" style="font-size:12px;color:#7d8aa6;text-decoration:none">Sign out</a>
+  </div>
   <div class="tabs-nav">
     <button class="tab-btn active" onclick="switchTab('analyzer',this)">Flip Analyzer</button>
     <button class="tab-btn" onclick="switchTab('arbitrage',this)">Arbitrage Scanner</button>
@@ -758,6 +761,7 @@ async function runAnalyze() {
 
   try {
     const resp = await fetch('/api/analyze', {
+      credentials: 'same-origin',
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         item, price, wear: currentWear,
@@ -1099,7 +1103,7 @@ function onSearch(q) {
   if (q.length < 2) { box.style.display = 'none'; return; }
   searchTimer = setTimeout(async () => {
     try {
-      const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const r = await fetch('/api/search?q=' + encodeURIComponent(q), {credentials:'same-origin'});
       const d = await r.json();
       if (!d.results.length) { box.style.display = 'none'; return; }
       box.style.display = 'block';
@@ -1286,7 +1290,7 @@ async function arbScan() {
     const checkVol = document.getElementById('arbCheckVol').checked ? 'true' : 'false';
     params.set('check_volatile', checkVol);
 
-    const resp = await fetch('/api/arbitrage?' + params.toString());
+    const resp = await fetch('/api/arbitrage?' + params.toString(), {credentials:'same-origin'});
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     arbResults = Array.isArray(data) ? data : (data.results || []);
