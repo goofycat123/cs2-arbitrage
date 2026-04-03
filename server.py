@@ -7,18 +7,10 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 import httpx
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from starlette.middleware.sessions import SessionMiddleware
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 
 from analyze_api import run_analysis
-from auth import (
-    LOGIN_PAGE_HTML,
-    AccessGateMiddleware,
-    access_lock_enabled,
-    session_signing_secret,
-    verify_access_password,
-)
 from config import CSGOEMPIRE_API_KEY, FLOAT_API_KEY, FEES, RATE_LIMITS
 from templates import FLIP_HTML
 
@@ -27,55 +19,12 @@ async def lifespan(app: FastAPI):
     yield
 
 
-_lock = access_lock_enabled()
-app = FastAPI(
-    title="CS2 Skin Analyzer",
-    lifespan=lifespan,
-    docs_url=None if _lock else "/docs",
-    redoc_url=None if _lock else "/redoc",
-    openapi_url=None if _lock else "/openapi.json",
-)
-
-app.add_middleware(AccessGateMiddleware)
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=session_signing_secret(),
-    session_cookie="cs2_arb_session",
-    max_age=60 * 60 * 24 * 14,
-    same_site="lax",
-    https_only=os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
-)
+app = FastAPI(title="CS2 Skin Analyzer", lifespan=lifespan)
 
 
 @app.get("/health")
 def health():
     return {"ok": True}
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page():
-    if not access_lock_enabled():
-        return RedirectResponse("/", status_code=302)
-    return LOGIN_PAGE_HTML
-
-
-@app.post("/login")
-async def login_submit(request: Request, password: str = Form(...)):
-    if not access_lock_enabled():
-        return RedirectResponse("/", status_code=302)
-    stored = os.getenv("APP_ACCESS_PASSWORD", "").strip()
-    if not verify_access_password(password, stored):
-        return RedirectResponse("/login?e=1", status_code=302)
-    request.session["access"] = True
-    return RedirectResponse("/", status_code=302)
-
-
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-    if access_lock_enabled():
-        return RedirectResponse("/login", status_code=302)
-    return RedirectResponse("/", status_code=302)
 
 
 @app.get("/api/search")
