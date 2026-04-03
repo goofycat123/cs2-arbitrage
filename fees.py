@@ -1,11 +1,10 @@
 """
 Fee calculator for Empire buy -> CSFloat sell flow.
 
-Empire buy price = what you pay on Empire
-CSFloat price = true market value (100% reference)
-CSFloat sell fee = 2%
+Empire buy price = what you pay on Empire (coins)
+CSFloat sell price = listed price; net proceeds = price * (1 - 2% CSFloat seller fee)
 
-Net profit = (csfloat_price * 0.98) - empire_price
+Net profit = net_after_float_sell(csfloat_price) - empire_price
 """
 
 from config import FEES

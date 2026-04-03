@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
+from config import SELL_VENUES
 from flip_analyzer import get_history, liquidity_score, CSFLOAT_FEE
 from trend import fetch_float_price, parse_sales
 
@@ -68,6 +69,26 @@ COLLECTIONS = {
 }
 
 
+def _fetch_live_listed_for_venue(
+    search_name: str,
+    venue: str,
+    float_min,
+    float_max,
+    live_price_override: float | None,
+) -> float | None:
+    """Gross listed/floor price before that marketplace’s sell fee."""
+    if live_price_override is not None:
+        return live_price_override
+    v = (venue or "csfloat").lower()
+    if v == "empire":
+        emp = _fetch_empire_listings(search_name)
+        return float(emp["floor"]) if emp else None
+    try:
+        return fetch_float_price(search_name, float_min=float_min, float_max=float_max)
+    except Exception:
+        return None
+
+
 def _fetch_empire_listings(item_name: str) -> dict | None:
     """Fetch live Empire listings for the item — floor, avg, high, count, price list."""
     try:
@@ -116,7 +137,7 @@ def _fetch_parsed_sales(market_hash_name: str) -> list:
         resp = httpx.get(
             "https://csfloat.com/api/v1/history/sales",
             headers={"Authorization": FLOAT_API_KEY},
-            params={"market_hash_name": market_hash_name},
+            params={"market_hash_name": market_hash_name, "limit": 1000},
             timeout=25,
         )
         if resp.status_code != 200:
@@ -293,6 +314,50 @@ def _fetch_pricempire_context(item_name: str) -> dict | None:
         return None
 
 
+def _fetch_cs2_market_context() -> dict | None:
+    """Fetch latest official CS2 update headlines to flag fresh-update FOMO windows."""
+    try:
+        resp = httpx.get(
+            "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/",
+            params={"appid": 730, "count": 6, "maxlength": 220, "format": "json"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None
+
+        items = resp.json().get("appnews", {}).get("newsitems", [])
+        if not items:
+            return None
+
+        now_ts = datetime.now(timezone.utc).timestamp()
+        latest = items[0]
+        latest_age_hours = round((now_ts - latest.get("date", now_ts)) / 3600, 1)
+        titles = [str(n.get("title", "")) for n in items]
+        joined = " | ".join(titles).lower()
+
+        fomo_terms = [
+            "case",
+            "capsule",
+            "sticker",
+            "armory",
+            "collection",
+            "major",
+            "operation",
+            "update",
+            "release notes",
+            "patch notes",
+        ]
+        has_fomo_catalyst = any(t in joined for t in fomo_terms)
+
+        return {
+            "latest_title": latest.get("title", "CS2 update"),
+            "latest_age_hours": latest_age_hours,
+            "has_fomo_catalyst": has_fomo_catalyst,
+        }
+    except Exception:
+        return None
+
+
 def run_analysis(
     item_name: str,
     buy_price: float,
@@ -302,8 +367,15 @@ def run_analysis(
     fade_min_pct=None,
     fade_max_pct=None,
     live_price_override: float | None = None,
+    sell_venue: str = "csfloat",
 ) -> dict:
     """Full flip analysis. Returns dict with verdict, windows, chart, trend, liquidity."""
+    sell_venue = (sell_venue or "csfloat").lower().strip()
+    if sell_venue not in SELL_VENUES:
+        sell_venue = "csfloat"
+    sell_fee = SELL_VENUES[sell_venue]["fee"]
+    sell_label = SELL_VENUES[sell_venue]["label"]
+
     wear_map = {"FN": "Factory New", "MW": "Minimal Wear", "FT": "Field-Tested", "WW": "Well-Worn", "BS": "Battle-Scarred"}
     wear_name = wear_map.get(wear, "Factory New")
 
@@ -323,21 +395,24 @@ def run_analysis(
 
     if not has_float:
         # No-float items: return live price only, no history
-        if live_price_override is not None:
-            live_price = live_price_override
-        else:
-            try:
-                live_price = fetch_float_price(item_name, float_min=None, float_max=None)
-            except Exception:
-                live_price = None
+        live_price = _fetch_live_listed_for_venue(
+            item_name, sell_venue, None, None, live_price_override
+        )
+        live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
+        live_profit = round(live_net - buy_price, 2) if live_net is not None else None
+        live_pct = round((live_profit / buy_price) * 100, 1) if live_profit is not None else None
         return {
             "item": item_name, "buy_price": buy_price, "verdict": "INFO",
-            "verdict_detail": "No float value - live price only (no historical data)",
-            "live_price": live_price, "live_net": round(live_price * 0.98, 2) if live_price else None,
-            "live_profit": round((live_price * 0.98 - buy_price), 2) if live_price else None,
-            "live_pct": round(((live_price * 0.98 - buy_price) / buy_price * 100), 1) if live_price else None,
+            "verdict_detail": f"No float value — live {sell_label} only (no historical data)",
+            "live_price": live_price,
+            "live_net": live_net,
+            "live_profit": live_profit,
+            "live_pct": live_pct,
+            "sell_venue": sell_venue,
+            "sell_venue_label": sell_label,
+            "sell_fee_pct": round(sell_fee * 100, 2),
             "w7": None, "w30": None, "w60": None, "liquidity": None, "chart": [],
-            "trend_notes": [{"text": "No float value — live price only", "type": "info"}]
+            "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
         }
 
     # For float items: normal analysis with wear condition
@@ -419,8 +494,6 @@ def run_analysis(
 
     w7, w30, w60 = wstats(7), wstats(30), wstats(60)
     liq = liquidity_score(w7, w30, w60)
-    sale_based = bool(parsed_sales)
-    stat_lbl = "median sale" if sale_based else "daily estimate"
 
     # Get marketplace listing count (only called on analyze)
     pm_context = _fetch_pricempire_context(search_name)
@@ -434,6 +507,8 @@ def run_analysis(
         csfloat_stale = bool(pm_context.get("csfloat_stale"))
         csfloat_age_h = pm_context.get("csfloat_last_updated_hours")
 
+    cs2_ctx = _fetch_cs2_market_context()
+
     # Empire live listings for direct comparison
     empire = _fetch_empire_listings(search_name)
 
@@ -446,17 +521,13 @@ def run_analysis(
         buffer = ((w["low"] - buy_price) / buy_price) * 100
         return {**w, "net_sell": round(net_sell, 2), "profit": round(profit, 2), "pct": round(pct, 1), "buffer": round(buffer, 1)}
 
-    # Live CSFloat price (buy-now only)
-    if live_price_override is not None:
-        live_price = live_price_override
-    else:
-        try:
-            live_price = fetch_float_price(search_name, float_min=float_min, float_max=float_max)
-        except Exception:
-            live_price = None
-    live_net = round(live_price * (1 - CSFLOAT_FEE), 2) if live_price else None
-    live_profit = round(live_net - buy_price, 2) if live_net else None
-    live_pct = round((live_profit / buy_price) * 100, 1) if live_profit else None
+    # Live sell-side quote (listed/floor before that site’s fee)
+    live_price = _fetch_live_listed_for_venue(
+        search_name, sell_venue, float_min, float_max, live_price_override
+    )
+    live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
+    live_profit = round(live_net - buy_price, 2) if live_net is not None else None
+    live_pct = round((live_profit / buy_price) * 100, 1) if live_profit is not None else None
 
     pump = round(((w7["avg"] / w30["avg"]) - 1) * 100, 1) if w7 and w30 else 0
     drop_60to7 = round(((w7["avg"] / w60["avg"]) - 1) * 100, 1) if w7 and w60 else None
@@ -464,7 +535,8 @@ def run_analysis(
     low7 = w7["low"] if w7 else 0
 
     # --- Mathematical risk scoring ---
-    def _count_dips_graph(days: int) -> int:
+    # Count dips using robust filtered days to avoid premium-print distortion.
+    def _count_dips(days: int) -> int:
         subset = data[:days]
         if not subset:
             return 0
@@ -475,23 +547,12 @@ def run_analysis(
             return 0
         return sum(1 for p, _ in robust if p < buy_price)
 
-    def _count_dips_sales(days: int) -> int:
-        cutoff = time.time() - days * 86400
-        return sum(1 for p in parsed_sales if p["ts"] >= cutoff and p["price"] < buy_price)
-
-    if parsed_sales:
-        dips_7d = _count_dips_sales(7)
-        dips_30d = _count_dips_sales(30)
-    else:
-        dips_7d = _count_dips_graph(7)
-        dips_30d = _count_dips_graph(30)
-
+    dips_7d = _count_dips(7)
+    dips_30d = _count_dips(30)
     days_30 = min(len(data), 30)
 
-    if parsed_sales:
-        v = _raw_sale_volatility_pct(parsed_sales, 30)
-        volatility = v if v is not None else 0.0
-    elif w30 and days_30 > 1:
+    # Price volatility (robust MAD-based % over filtered 30d sales)
+    if w30 and days_30 > 1:
         prices_30 = [d["avg_price"] / 100 for d in data[:30]]
         counts_30 = [d["count"] for d in data[:30]]
         robust_30 = _robust_sales_days(prices_30, counts_30)
@@ -502,6 +563,7 @@ def run_analysis(
             med = statistics.median(expanded_prices)
             abs_dev = [abs(p - med) for p in expanded_prices]
             mad = statistics.median(abs_dev)
+            # Convert MAD to robust sigma-equivalent and normalize as percent.
             robust_sigma = 1.4826 * mad
             volatility = round((robust_sigma / med) * 100, 1) if med > 0 else 0
         else:
@@ -509,16 +571,8 @@ def run_analysis(
     else:
         volatility = 0
 
-    if parsed_sales:
-        c30 = time.time() - 30 * 86400
-        in_30 = [p for p in parsed_sales if p["ts"] >= c30]
-        if in_30:
-            below = sum(1 for p in in_30 if p["price"] < buy_price)
-            drop_prob = round(100 * below / len(in_30), 1)
-        else:
-            drop_prob = 0.0
-    else:
-        drop_prob = round((dips_30d / days_30) * 100, 1) if days_30 > 0 else 0
+    # Drop probability: % of days in last 30d where price was below buy
+    drop_prob = round((dips_30d / days_30) * 100, 1) if days_30 > 0 else 0
 
     # Composite profit score using multiple sources
     profit_scores = []
@@ -563,32 +617,36 @@ def run_analysis(
     lines = []
 
     # 1. Live price situation
+    fee_pct_disp = int(sell_fee * 100) if sell_fee * 100 == int(sell_fee * 100) else round(sell_fee * 100, 2)
     if live_pct is not None:
         if live_pct < 0:
-            lines.append(f"Live CSFloat at ${live_price:.0f} is ${buy_price - live_price:.0f} below your buy — you'd lose money selling right now.")
+            lines.append(
+                f"Live {sell_label} at ${live_price:.0f} (listed) — after {fee_pct_disp}% fee net ${live_net:.0f} vs buy ${buy_price:.0f} ({live_pct:+.1f}%)."
+            )
         elif live_pct < 2:
-            lines.append(f"Live at ${live_price:.0f} barely covers the 2% fee ({live_pct:+.1f}%).")
+            lines.append(
+                f"Live {sell_label} at ${live_price:.0f} — after {fee_pct_disp}% fee only {live_pct:+.1f}% vs buy; tight."
+            )
         else:
-            lines.append(f"Live at ${live_price:.0f} is profitable now ({live_pct:+.1f}% after fee).")
+            lines.append(
+                f"Live {sell_label} at ${live_price:.0f} — after {fee_pct_disp}% fee net ${live_net:.0f} ({live_pct:+.1f}% vs buy)."
+            )
 
     # 2. Historical context
     if w30:
         w30_pct_r = round((w30["avg"] * 0.98 - buy_price) / buy_price * 100, 1)
         if w30_pct_r >= 5:
-            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} net ~${w30['avg'] * 0.98:.0f} after 2% fee = +{w30_pct_r}% vs buy — market supports this level.")
+            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — market consistently supports this price.")
         elif w30_pct_r >= 2:
-            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} = +{w30_pct_r}% vs buy — thin margin.")
+            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — thin but positive margin historically.")
         else:
-            lines.append(f"30d {stat_lbl} ${w30['avg']:.0f} = {w30_pct_r:+}% vs buy — tight or negative at this entry.")
+            lines.append(f"30d avg ${w30['avg']:.0f} = {w30_pct_r:+}% — historically barely profitable or losing at this buy.")
 
     # 3. Risk factors
     if pump > 15:
-        lines.append(f"7d vs 30d {stat_lbl}: +{pump:.0f}% — short window trading above the longer norm, correction risk.")
+        lines.append(f"Price is PUMPED {pump:.0f}% above 30d avg — highly likely to correct during your 7d lock.")
     if dips_7d > 0:
-        if sale_based:
-            lines.append(f"{dips_7d} individual sales in the last 7d below your buy; {drop_prob}% of last-30d sales also below buy.")
-        else:
-            lines.append(f"{dips_7d} days in the last 7d had avg below your buy; ~{drop_prob}% of last-30d days below buy (graph estimate).")
+        lines.append(f"Price dipped below your buy {dips_7d}x in the last 7 days ({drop_prob}% drop chance over 30d).")
     if volatility > 12:
         lines.append(f"Very volatile ({volatility}%) — hard to predict where it lands after 7d lock.")
     elif volatility > 6:
@@ -620,35 +678,35 @@ def run_analysis(
         target = round(w30["avg"] * 0.98 / 1.04, 0)
         lines.append(f"Wait for live price to rise, or buy below ${target:.0f} for adequate buffer.")
     elif verdict == "SKIP" and pump > 15:
-        lines.append(f"Wait for pump to cool — 30d {stat_lbl} ${w30['avg']:.0f} is a saner reference.")
+        lines.append(f"Wait for pump to cool — 30d avg ${w30['avg']:.0f} is the real floor to target.")
 
     verdict_detail = " ".join(lines) if lines else f"Avg profit {real_pct}% across {sources_str}."
 
     # Trend analysis
     trend_notes = []
 
-    # 7d vs 30d momentum (median of real sales when available)
+    # 7d vs 30d momentum
     if pump > 15:
-        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: +{pump}% — short window inflated vs longer norm", "type": "danger"})
+        trend_notes.append({"text": f"7d avg is +{pump}% above 30d avg — PUMPED, price inflated", "type": "danger"})
     elif pump > 5:
-        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: +{pump}% — rising, watch for correction", "type": "warn"})
+        trend_notes.append({"text": f"7d avg is +{pump}% above 30d avg — rising, watch for correction", "type": "warn"})
     elif pump < -10:
-        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {pump}% — dropping fast", "type": "danger"})
+        trend_notes.append({"text": f"7d avg is {pump}% below 30d avg — DROPPING fast", "type": "danger"})
     elif pump < -3:
-        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {pump}% — drifting down", "type": "warn"})
+        trend_notes.append({"text": f"7d avg is {pump}% below 30d avg — declining slowly", "type": "warn"})
     else:
-        trend_notes.append({"text": f"7d vs 30d {stat_lbl}: {'+' if pump > 0 else ''}{pump}% — stable", "type": "safe"})
+        trend_notes.append({"text": f"7d vs 30d: {'+' if pump > 0 else ''}{pump}% — price stable", "type": "safe"})
 
-    # 60d long-term direction (median sales)
+    # 60d long-term direction
     if drop_60to7 is not None:
         if drop_60to7 < -15:
-            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {drop_60to7}% — major decline vs 2mo norm", "type": "danger"})
+            trend_notes.append({"text": f"60d trend: {drop_60to7}% — major decline, possible new supply or case drop", "type": "danger"})
         elif drop_60to7 < -5:
-            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {drop_60to7}% — softer than 2mo norm", "type": "warn"})
+            trend_notes.append({"text": f"60d trend: {drop_60to7}% — downward over 2 months", "type": "warn"})
         elif drop_60to7 > 10:
-            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: +{drop_60to7}% — strong vs 2mo norm", "type": "safe"})
+            trend_notes.append({"text": f"60d trend: +{drop_60to7}% — strong uptrend over 2 months", "type": "safe"})
         else:
-            trend_notes.append({"text": f"7d vs 60d {stat_lbl}: {'+' if drop_60to7 > 0 else ''}{drop_60to7}% — in line long-term", "type": "safe"})
+            trend_notes.append({"text": f"60d trend: {'+' if drop_60to7 > 0 else ''}{drop_60to7}% — flat long-term", "type": "safe"})
 
     # Volume change
     if w7 and w30 and w30["sales"] > 0:
@@ -689,28 +747,35 @@ def run_analysis(
         else:
             trend_notes.append({"text": f"Collection: {coll['name']} — {coll['note']}", "type": "info"})
 
-    # Chart: daily CSFloat graph buckets (visual trend only — cards use per-sale stats when available)
-    chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:60]]
+    # Official CS2 update context (possible FOMO catalyst window).
+    if cs2_ctx:
+        age_h = cs2_ctx.get("latest_age_hours")
+        title = cs2_ctx.get("latest_title", "Recent CS2 update")
+        fomo = cs2_ctx.get("has_fomo_catalyst")
+        if age_h is not None and age_h <= 72 and fomo:
+            trend_notes.append({
+                "text": f"Recent official CS2 update ({age_h}h): \"{title}\" — elevated hype/FOMO risk on affected items",
+                "type": "warn",
+            })
+        elif age_h is not None and age_h <= 72:
+            trend_notes.append({
+                "text": f"Recent official CS2 post ({age_h}h): \"{title}\" — monitor short-term volatility",
+                "type": "info",
+            })
 
-    if sale_based:
-        trend_notes.insert(0, {
-            "text": "7d / 30d / 60d numbers = real CSFloat sales (low, high, median + mean of trades). Chart = daily graph.",
-            "type": "info",
-        })
-    else:
-        trend_notes.insert(0, {
-            "text": "No per-sale history returned — windows use daily graph buckets (less precise for tight margins).",
-            "type": "warn",
-        })
+    # Chart data (last 60 days)
+    chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:60]]
 
     return {
         "item": item_name, "buy_price": buy_price,
         "live_price": live_price, "live_net": live_net, "live_profit": live_profit, "live_pct": live_pct,
+        "sell_venue": sell_venue,
+        "sell_venue_label": sell_label,
+        "sell_fee_pct": round(sell_fee * 100, 2),
         "w7": window_result(w7), "w30": window_result(w30), "w60": window_result(w60),
         "liquidity": liq, "pump_pct": pump, "trend_notes": trend_notes,
         "chart": chart_data, "volatility": volatility, "drop_prob": drop_prob,
         "dips_7d": dips_7d, "dips_30d": dips_30d,
         "verdict": verdict, "verdict_detail": verdict_detail,
         "empire": empire,
-        "stats_basis": "sales" if sale_based else "graph",
     }

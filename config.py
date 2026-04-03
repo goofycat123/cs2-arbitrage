@@ -8,10 +8,17 @@ STEAM_API_KEY = os.getenv("STEAM_API_KEY")
 CSGOEMPIRE_API_KEY = os.getenv("CSGOEMPIRE_API_KEY")
 PRICEMPIRE_API_KEY = os.getenv("PRICEMPIRE_API_KEY")
 
-# Fees — Empire buy side ~6% avg, CSFloat sell side 2%
+# Marketplace sell-side fees (applied to listed price before comparing to your buy).
+# CSFloat: seller fee. Empire: no per-sale % in this model — proceeds = listing price.
 FEES = {
-    "empire_buy": 0.06,  # ~5-7% markup on Empire withdrawals
     "float_sell": 0.02,  # 2% CSFloat seller fee
+    "empire_sell": 0.0,  # CSGO Empire — 0% sale fee on coin proceeds (verify current ToS)
+}
+
+# Flip analyzer: live “sell here” quote — fee applied to listed/floor price first, then vs buy
+SELL_VENUES = {
+    "csfloat": {"label": "CSFloat", "fee": FEES["float_sell"]},
+    "empire": {"label": "CSGO Empire", "fee": FEES["empire_sell"]},
 }
 
 MIN_PRICE = 10.0

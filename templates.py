@@ -164,12 +164,12 @@ tr:hover td{background:#161b2288}
       </table>
       <div class="es" id="es">
         <div class="icon">&#128269;</div>
-        <p>Set filters and hit <strong>Scan Now</strong>. Compare Empire or free Skinport catalog prices to CSFloat listings (official APIs only).</p>
+        <p>Set filters and hit <strong>Scan Now</strong>. Buys on Empire below CSFloat true value, checks trend stability, pump detection, and liquidity.</p>
       </div>
     </div>
 
     <div class="lp" id="lp">
-      <div class="le scan"><span class="t">[--:--:--]</span> Ready. Empire / Skinport &#8594; CSFloat scanner.</div>
+      <div class="le scan"><span class="t">[--:--:--]</span> Ready. Empire &#8594; CSFloat arbitrage scanner.</div>
     </div>
   </div>
 </div>
@@ -533,6 +533,13 @@ h1{
   </div>
   <div class="input-row">
     <input type="number" id="buyPrice" placeholder="Buy price $" style="max-width:140px" step="0.01">
+    <div class="fg" style="margin:0;min-width:150px">
+      <label for="sellVenue" style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">Sell on (live quote)</label>
+      <select id="sellVenue" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #252525;background:#181818;color:#ccc;font-size:13px;outline:none">
+        <option value="csfloat">CSFloat (2% fee)</option>
+        <option value="empire">CSGO Empire (0% sale fee)</option>
+      </select>
+    </div>
     <input type="number" id="floatMin" placeholder="Float min (e.g. 0.00)" style="max-width:140px" step="0.0001" min="0" max="1">
     <input type="number" id="floatMax" placeholder="Float max (e.g. 0.07)" style="max-width:140px" step="0.0001" min="0" max="1">
     <button id="analyzeBtn" onclick="runAnalyze()">Analyze</button>
@@ -553,16 +560,16 @@ h1{
 
     <div class="liq-box" id="liveBox" style="display:none">
       <div>
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">Live CSFloat</div>
-        <div style="font-size:28px;font-weight:600;color:#ddd" id="livePrice"></div>
+        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px" id="liveBoxTitle">Live listed</div>
+        <div style="font-size:28px;font-weight:600;color:#ddd" id="livePrice">—</div>
       </div>
       <div style="flex:1;text-align:center">
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">After 2% Fee</div>
-        <div style="font-size:20px;font-weight:500;color:#999" id="liveNet"></div>
+        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px" id="liveFeeLabel">After fee (net)</div>
+        <div style="font-size:20px;font-weight:500;color:#999" id="liveNet">—</div>
       </div>
       <div style="text-align:right">
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">Live Profit</div>
-        <div style="font-size:20px;font-weight:600" id="liveProfit"></div>
+        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">vs buy (profit)</div>
+        <div style="font-size:20px;font-weight:600" id="liveProfit">—</div>
       </div>
     </div>
 
@@ -572,8 +579,11 @@ h1{
     </div>
 
     <div style="background:#151515;border:1px solid #222;border-radius:8px;padding:16px;margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:12px;flex-wrap:wrap">
+        <div>
         <h3 style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.8px;margin:0">Price History</h3>
+        <div style="font-size:10px;color:#444;margin-top:4px;max-width:280px;line-height:1.35">Green dashed = live <em>listed</em> for your selected sell site; fee → net profit is in the card above.</div>
+        </div>
         <div style="display:flex;gap:6px;align-items:center">
           <button class="chart-src-btn active" id="srcFloat" onclick="setChartSource('float')">CSFloat Hist</button>
           <button class="chart-src-btn" id="srcEmpire" onclick="setChartSource('empire')" style="display:none">Empire Now</button>
@@ -618,6 +628,7 @@ h1{
           <div><span style="color:#c55">DROPPING (-10%)</span> — falling fast, new supply?</div>
           <div><span style="color:#c93">Rising/Declining</span> — moderate movement</div>
           <div><span style="color:#4a9">Stable</span> — safe to flip within 7d lock</div>
+          <div><span style="color:#c93">FOMO window</span> — recent official CS2 update/news can create temporary hype</div>
           <div><span style="color:#c93">Market feed stale/degraded</span> — Pricempire/CSFloat freshness issues reduce confidence</div>
           <div style="margin-top:6px;color:#aaa;font-weight:600">Verdict</div>
           <div><span style="color:#4a9">BUY</span> — net margin, stable trend, and acceptable liquidity</div>
@@ -646,10 +657,9 @@ h1{
           <option value="both">Both</option>
         </select>
         <label for="arbDirection">Direction</label>
-        <select id="arbDirection" style="width:170px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none" onchange="onArbDirectionChange()">
+        <select id="arbDirection" style="width:155px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none">
           <option value="empire_to_float" selected>Empire -> CSFloat</option>
           <option value="float_to_empire">CSFloat -> Empire</option>
-          <option value="skinport_to_float">Skinport -> CSFloat</option>
         </select>
         <label for="arbPages">Pages</label>
         <select id="arbPages" style="width:90px;padding:6px 8px;border-radius:4px;border:1px solid #252525;background:#181818;color:#aaa;font-size:12px;outline:none">
@@ -670,8 +680,6 @@ h1{
         <input type="number" id="arbFloatMax" placeholder="" step="0.0001" min="0" max="1">
         <label for="arbCheckVol">Volatile 7d</label>
         <input type="checkbox" id="arbCheckVol">
-        <label for="arbMinSkinQty" id="arbMinSkinQtyLbl" style="display:none">Min Skinport qty</label>
-        <input type="number" id="arbMinSkinQty" value="2" min="1" step="1" style="display:none;width:56px">
       </div>
       <div class="arb-count" id="arbCount" style="display:none"></div>
     </div>
@@ -682,7 +690,7 @@ h1{
             <th>#</th>
             <th>Item Name</th>
             <th>Wear</th>
-            <th id="arbColBuy">Buy (Empire)</th>
+            <th>Empire Listed</th>
             <th>CSFloat Listed</th>
             <th>Net Profit</th>
             <th>Margin %</th>
@@ -692,7 +700,7 @@ h1{
         </thead>
         <tbody id="arbTbody"></tbody>
       </table>
-      <div class="arb-empty" id="arbEmpty">Hit <strong>Scan Now</strong>. Empire or official Skinport catalog vs CSFloat (needs CSFloat API key; Empire needs Empire key).</div>
+      <div class="arb-empty" id="arbEmpty">Hit <strong>Scan Now</strong> to fetch live Empire listings and compare against CSFloat prices.</div>
     </div>
   </div><!-- end tab-arbitrage -->
 
@@ -721,22 +729,17 @@ function loadHistory(item, price) {
   runAnalyze();
 }
 
-function windowCard(label, w, buyPrice, livePrice) {
+function windowCard(label, w, buyPrice, livePrice, sellVenueShort) {
   if (!w) return '';
   const low_net = (w.low * 0.98).toFixed(2);
   const high_net = (w.high * 0.98).toFixed(2);
-  const med_net = (w.avg * 0.98).toFixed(2);
-  let midRows = '<div class="row"><span class="label">Median sale (net 2%)</span><span class="val">$' + med_net + '</span></div>';
-  if (w.mean_sale != null && w.mean_sale !== undefined) {
-    midRows += '<div class="row"><span class="label">Mean sale (net 2%)</span><span class="val">$' + (w.mean_sale * 0.98).toFixed(2) + '</span></div>';
-  } else if (w.basis === 'graph') {
-    midRows += '<div class="row" style="font-size:11px;color:#7d8aa6;line-height:1.4">From daily graph buckets — prefer per-sale when API returns history.</div>';
-  }
+  const avg_net = (w.avg * 0.98).toFixed(2);
+  const liveLbl = sellVenueShort || 'CSFloat';
   return '<div class="card"><h3>' + label + '</h3>' +
-    '<div class="row"><span class="label">Lowest sale (net 2%)</span><span class="val">$' + low_net + '</span></div>' +
-    '<div class="row"><span class="label">Highest sale (net 2%)</span><span class="val">$' + high_net + '</span></div>' +
-    midRows +
-    (livePrice ? '<div class="row"><span class="label">Live buy now</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
+    '<div class="row"><span class="label">Lowest sale <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + low_net + '</span></div>' +
+    '<div class="row"><span class="label">Highest sale <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + high_net + '</span></div>' +
+    '<div class="row"><span class="label">Median / avg <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + avg_net + '</span></div>' +
+    (livePrice ? '<div class="row"><span class="label">Live listed · ' + liveLbl + '</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
     '</div>';
 }
 
@@ -773,6 +776,7 @@ async function runAnalyze() {
         fade_min_pct: fade_min,
         fade_max_pct: fade_max,
         live_price_override: overrideVal,
+        sell_venue: document.getElementById('sellVenue').value,
       })
     });
     const d = await resp.json();
@@ -787,16 +791,26 @@ async function runAnalyze() {
     document.getElementById('verdictLabel').textContent = d.verdict;
     document.getElementById('verdictDetail').textContent = d.verdict_detail;
 
-    // Live price
+    // Live sell quote (listed → after venue fee → vs buy)
     const lb = document.getElementById('liveBox');
+    lb.style.display = 'flex';
+    const venLabel = d.sell_venue_label || 'CSFloat';
+    const feePct = d.sell_fee_pct != null ? d.sell_fee_pct : 2;
+    document.getElementById('liveBoxTitle').textContent = 'Live listed · ' + venLabel;
+    document.getElementById('liveFeeLabel').textContent =
+      feePct === 0 ? 'Net (= listed, 0% sale fee)' : ('After ' + feePct + '% fee (net)');
+    const lp = document.getElementById('liveProfit');
     if (d.live_price) {
-      lb.style.display = 'flex';
       document.getElementById('livePrice').textContent = '$' + d.live_price.toFixed(2);
       document.getElementById('liveNet').textContent = '$' + d.live_net.toFixed(2);
-      const lp = document.getElementById('liveProfit');
       lp.textContent = '$' + d.live_profit.toFixed(2) + ' (' + d.live_pct + '%)';
       lp.style.color = d.live_pct >= 2 ? '#4a9' : d.live_pct >= 0 ? '#c93' : '#c55';
-    } else { lb.style.display = 'none'; }
+    } else {
+      document.getElementById('livePrice').textContent = '—';
+      document.getElementById('liveNet').textContent = '—';
+      lp.textContent = 'No live quote (keys / listings)';
+      lp.style.color = '#666';
+    }
 
     // Empire box
     const empBox = document.getElementById('empireBox');
@@ -818,11 +832,11 @@ async function runAnalyze() {
       document.getElementById('srcEmpire').style.display = 'none';
     }
 
-    // Window cards
+    const sellShort = venLabel.replace(/^CSGO\s+/i, '').slice(0, 14);
     document.getElementById('windowCards').innerHTML =
-      windowCard('7 Days', d.w7, price, d.live_price) +
-      windowCard('30 Days', d.w30, price, d.live_price) +
-      windowCard('60 Days', d.w60, price, d.live_price);
+      windowCard('7 Days', d.w7, price, d.live_price, sellShort) +
+      windowCard('30 Days', d.w30, price, d.live_price, sellShort) +
+      windowCard('60 Days', d.w60, price, d.live_price, sellShort);
 
     // Liquidity
     const liq = d.liquidity;
@@ -833,7 +847,8 @@ async function runAnalyze() {
         'Grade <span class="liq-grade">' + liq.grade + '</span>';
     }
 
-    // Chart
+    // Chart (horizontal live line uses same listed price as selected sell site)
+    chartLiveVenueLabel = venLabel;
     if (d.chart && d.chart.length) drawChart(d.chart, price, d.live_price);
 
     // Trend notes
@@ -856,6 +871,15 @@ async function runAnalyze() {
 // Price chart with time range filtering
 let chartData = null, chartBuyPrice = null, chartLivePrice = null, chartDaysRange = 60, hoveredIdx = -1;
 let chartEmpire = null, chartSource = 'float';
+let chartLiveVenueLabel = 'CSFloat';
+
+function liveChartTag(lbl) {
+  if (!lbl) return 'LIVE';
+  const s = String(lbl).toLowerCase();
+  if (s.includes('empire')) return 'Empire';
+  if (s.includes('csfloat')) return 'CSFloat';
+  return lbl.length > 12 ? lbl.slice(0, 12) : lbl;
+}
 
 function setChartSource(src) {
   chartSource = src;
@@ -934,12 +958,12 @@ function drawEmpireChart() {
   ctx.fillText('BUY $' + chartBuyPrice.toFixed(0), W - pad.r + 4, yScale(chartBuyPrice) + 4);
   ctx.setLineDash([]);
 
-  // Live CSFloat line
+  // Live listed line (selected sell site)
   if (chartLivePrice) {
     ctx.strokeStyle = '#4a944a88'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
     ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartLivePrice)); ctx.lineTo(W - pad.r, yScale(chartLivePrice)); ctx.stroke();
     ctx.fillStyle = '#4a9'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-    ctx.fillText('FLOAT $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
+    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
     ctx.setLineDash([]);
   }
 
@@ -1010,12 +1034,12 @@ function drawChartRange(days) {
   ctx.fillText('BUY $' + chartBuyPrice.toFixed(0), W - pad.r + 4, yScale(chartBuyPrice) + 4);
   ctx.setLineDash([]);
 
-  // LIVE price line
+  // LIVE listed line (selected sell site — net after fee is in live card)
   if (chartLivePrice) {
     ctx.strokeStyle = '#4a944a44'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
     ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartLivePrice)); ctx.lineTo(W - pad.r, yScale(chartLivePrice)); ctx.stroke();
     ctx.fillStyle = '#4a9'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-    ctx.fillText('LIVE $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
+    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
     ctx.setLineDash([]);
   }
 
@@ -1231,25 +1255,6 @@ function switchTab(name, btn) {
 let arbResults = [];
 let arbMeta = null;
 
-function onArbDirectionChange() {
-  const d = document.getElementById('arbDirection').value;
-  const src = document.getElementById('arbSource');
-  const lbl = document.getElementById('arbColBuy');
-  const qLbl = document.getElementById('arbMinSkinQtyLbl');
-  const qIn = document.getElementById('arbMinSkinQty');
-  if (d === 'skinport_to_float') {
-    if (src) src.disabled = true;
-    if (lbl) lbl.textContent = 'Buy (Skinport min)';
-    if (qLbl) qLbl.style.display = '';
-    if (qIn) qIn.style.display = '';
-  } else {
-    if (src) src.disabled = false;
-    if (lbl) lbl.textContent = 'Buy (Empire)';
-    if (qLbl) qLbl.style.display = 'none';
-    if (qIn) qIn.style.display = 'none';
-  }
-}
-
 function goToAnalyzer() {
   // Switch tabs without needing a button reference.
   const analyzerBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => {
@@ -1283,14 +1288,10 @@ async function arbScan() {
   spinner.style.display = 'block';
   countEl.style.display = 'none';
   document.getElementById('arbEmpty').style.display = 'block';
-  const dirV = document.getElementById('arbDirection').value;
-  document.getElementById('arbEmpty').textContent = dirV === 'skinport_to_float'
-    ? 'Skinport catalog (cached) + CSFloat listing checks... first run may download ~10MB catalog.'
-    : 'Scanning Empire and CSFloat... this may take 30-60 seconds.';
+  document.getElementById('arbEmpty').textContent = 'Scanning Empire and CSFloat... this may take 30-60 seconds.';
   document.getElementById('arbTbody').innerHTML = '';
 
   try {
-    const dirV = document.getElementById('arbDirection').value;
     const getOptFloat = (id) => {
       const v = document.getElementById(id).value.trim();
       if (!v) return null;
@@ -1300,7 +1301,7 @@ async function arbScan() {
 
     const params = new URLSearchParams();
     params.set('source', document.getElementById('arbSource').value);
-    params.set('direction', dirV);
+    params.set('direction', document.getElementById('arbDirection').value);
     params.set('pages', document.getElementById('arbPages').value);
     // CSFloat is strict on rate limits; keep request count very modest.
     const maxItems = (document.getElementById('arbPages').value === '1') ? 5 : 10;
@@ -1315,11 +1316,6 @@ async function arbScan() {
 
     const checkVol = document.getElementById('arbCheckVol').checked ? 'true' : 'false';
     params.set('check_volatile', checkVol);
-
-    if (dirV === 'skinport_to_float') {
-      const mq = parseInt(document.getElementById('arbMinSkinQty').value, 10);
-      params.set('min_source_listings', Number.isFinite(mq) && mq >= 1 ? mq : 2);
-    }
 
     const resp = await fetch('/api/arbitrage?' + params.toString());
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -1346,19 +1342,13 @@ function renderArbTable() {
     tbody.innerHTML = '';
     empty.style.display = 'block';
     if (arbMeta && !arbMeta.keys_present) {
-      empty.textContent = arbMeta.direction === 'skinport_to_float'
-        ? 'CSFloat API key missing (FLOAT_API_KEY / CSFLOAT_API_KEY). Skinport catalog needs no key.'
-        : 'CSGOEmpire/CSFloat API keys missing (backend returned 0 results).';
-    } else if (arbMeta && arbMeta.direction === 'skinport_to_float' && arbMeta.skinport_candidates === 0) {
-      empty.textContent = 'No Skinport rows matched price/qty/blacklist filters. Widen $ range or lower Min Skinport qty.';
-    } else if (arbMeta && arbMeta.empire_items_fetched === 0 && arbMeta.direction !== 'skinport_to_float') {
+      empty.textContent = 'CSGOEmpire/CSFloat API keys missing (backend returned 0 results).';
+    } else if (arbMeta && arbMeta.empire_items_fetched === 0) {
       empty.textContent = 'CSGOEmpire returned 0 items for this scan (try Pages=3, or change Source).';
       } else if (arbMeta && arbMeta.csfloat_listings_found === 0 && arbMeta.csfloat_items_enqueued > 0) {
         empty.textContent = 'CSFloat rate-limited or returning no listings right now. Wait ~60s and scan again.';
     } else if (arbMeta && arbMeta.profitable_pre_margin === 0) {
-      empty.textContent = arbMeta.direction === 'skinport_to_float'
-        ? ('No profitable Skinport->Float matches. Skinport rows checked: ' + arbMeta.csfloat_items_enqueued + '.')
-        : ('No profitable matches. Empire items scanned: ' + arbMeta.empire_items_fetched + '.');
+      empty.textContent = 'No profitable matches. Empire items scanned: ' + arbMeta.empire_items_fetched + '.';
     } else if (arbResults.length) {
       empty.textContent = 'No items meet the minimum margin filter (' + minMargin + '%). Found ' + arbResults.length + ' total profitable items before filter.';
     } else {
@@ -1378,11 +1368,8 @@ function renderArbTable() {
       ? '<span class="arb-margin-hi">+' + r.margin_pct.toFixed(2) + '%</span>'
       : '<span class="arb-margin-md">+' + r.margin_pct.toFixed(2) + '%</span>';
     const volatileBadge = r.volatile ? '<span class="arb-volatile">Volatile</span>' : '<span style="color:#333;font-size:11px">&#8212;</span>';
+    const itemUrl = 'https://csfloat.com/search?market_hash_name=' + encodeURIComponent(r.name);
     const nameArg = JSON.stringify(r.name);
-    const scanDir = arbMeta && arbMeta.direction ? arbMeta.direction : '';
-    const linkCell = (scanDir === 'skinport_to_float' && r.source_url)
-      ? '<a href="' + r.source_url + '" target="_blank" class="arb-link">Skinport</a> &middot; <a href="' + r.csfloat_url + '" target="_blank" class="arb-link">Float</a>'
-      : '<a href="' + r.csfloat_url + '" target="_blank" class="arb-link">CSFloat</a>';
     return '<tr' + rowCls + '>' +
       '<td style="color:#444">' + (i + 1) + '</td>' +
       '<td><a href="#" style="color:#aaa;text-decoration:none;transition:color .15s" onclick="analyzeFromArb(' + nameArg + ',' + r.empire_usd + ',' + r.csfloat_floor + '); return false;">' + r.name + '</a></td>' +
@@ -1392,15 +1379,9 @@ function renderArbTable() {
       '<td class="arb-profit-pos">+$' + r.net_profit.toFixed(2) + '</td>' +
       '<td>' + marginBadge + '</td>' +
       '<td>' + volatileBadge + '</td>' +
-      '<td>' + linkCell + '</td>' +
+      '<td><a href="' + r.csfloat_url + '" target="_blank" class="arb-link">Buy on Float &#8599;</a></td>' +
       '</tr>';
   }).join('');
-}
-
-if (typeof document !== 'undefined') {
-  document.addEventListener('DOMContentLoaded', function() {
-    if (document.getElementById('arbDirection')) onArbDirectionChange();
-  });
 }
 
 document.getElementById('arbMinMargin').addEventListener('input', function() {
