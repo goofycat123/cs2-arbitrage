@@ -726,9 +726,9 @@ function windowCard(label, w, buyPrice, livePrice) {
   const high_net = (w.high * 0.98).toFixed(2);
   const avg_net = (w.avg * 0.98).toFixed(2);
   return '<div class="card"><h3>' + label + '</h3>' +
-    '<div class="row"><span class="label">Low</span><span class="val">$' + low_net + '</span></div>' +
-    '<div class="row"><span class="label">High</span><span class="val">$' + high_net + '</span></div>' +
-    '<div class="row"><span class="label">Avg</span><span class="val">$' + avg_net + '</span></div>' +
+    '<div class="row"><span class="label">Lowest sale</span><span class="val">$' + low_net + '</span></div>' +
+    '<div class="row"><span class="label">Highest sale</span><span class="val">$' + high_net + '</span></div>' +
+    '<div class="row"><span class="label">Avg (weighted)</span><span class="val">$' + avg_net + '</span></div>' +
     (livePrice ? '<div class="row"><span class="label">Live</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
     '</div>';
 }

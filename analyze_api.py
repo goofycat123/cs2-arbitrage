@@ -1,11 +1,12 @@
 """Flip analyze endpoint logic — separated from server.py."""
 
 import statistics
+import time
 from datetime import datetime, timezone
 
 import httpx
 from flip_analyzer import get_history, liquidity_score, CSFLOAT_FEE
-from trend import fetch_float_price
+from trend import fetch_float_price, parse_sales
 
 # Collection metadata: name -> (type, year, volatile, note)
 # type: "operation" = operation drop, "case" = case collection, "rare" = discontinued/rare pool
@@ -101,6 +102,41 @@ def _fetch_empire_listings(item_name: str) -> dict | None:
         }
     except Exception:
         return None
+
+
+def _fetch_parsed_sales(market_hash_name: str) -> list:
+    """Individual CSFloat sales (timestamp + USD price). Empty if API fails."""
+    try:
+        from config import FLOAT_API_KEY
+        from rate_limiter import wait_if_needed
+
+        if not FLOAT_API_KEY:
+            return []
+        wait_if_needed("float")
+        resp = httpx.get(
+            "https://csfloat.com/api/v1/history/sales",
+            headers={"Authorization": FLOAT_API_KEY},
+            params={"market_hash_name": market_hash_name},
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            return []
+        raw = resp.json()
+        rows = raw if isinstance(raw, list) else raw.get("data", raw.get("sales", []))
+        return parse_sales(rows)
+    except Exception:
+        return []
+
+
+def _sale_low_high_in_window(parsed: list, days: int) -> tuple[float, float] | None:
+    """True min/max sale price in the last `days` calendar days (not daily averages)."""
+    if not parsed:
+        return None
+    cutoff = time.time() - days * 86400
+    prices = [p["price"] for p in parsed if p["ts"] >= cutoff]
+    if not prices:
+        return None
+    return (round(min(prices), 2), round(max(prices), 2))
 
 
 def _detect_collection(item_name: str) -> dict | None:
@@ -328,6 +364,8 @@ def run_analysis(
         return {"error": "No data from CSFloat"}
     data = sorted(data, key=lambda x: x["day"], reverse=True)
 
+    parsed_sales = _fetch_parsed_sales(search_name)
+
     def _robust_sales_days(prices: list[float], counts: list[int]) -> list[tuple[float, int]]:
         """
         Remove likely premium outlier days (e.g. rare sticker/float prints) so
@@ -371,8 +409,12 @@ def run_analysis(
         else:
             avg = sum(prices) / len(prices)
 
-        # Low/High from robust filtered sales days.
-        if sales_days:
+        # Low/High: prefer real individual sale prices in the window (CSFloat /history/sales).
+        # Graph points are daily *averages* — their min/max is NOT the cheapest sale that week.
+        ext = _sale_low_high_in_window(parsed_sales, days)
+        if ext:
+            low, high = ext[0], ext[1]
+        elif sales_days:
             low = round(min(p for p, c in sales_days), 2)
             high = round(max(p for p, c in sales_days), 2)
         else:
