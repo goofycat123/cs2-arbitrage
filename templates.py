@@ -533,13 +533,6 @@ h1{
   </div>
   <div class="input-row">
     <input type="number" id="buyPrice" placeholder="Buy price $" style="max-width:140px" step="0.01">
-    <div class="fg" style="margin:0;min-width:150px">
-      <label for="sellVenue" style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">Sell on (live quote)</label>
-      <select id="sellVenue" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #252525;background:#181818;color:#ccc;font-size:13px;outline:none">
-        <option value="csfloat">CSFloat (2% fee)</option>
-        <option value="empire">CSGO Empire (0% sale fee)</option>
-      </select>
-    </div>
     <input type="number" id="floatMin" placeholder="Float min (e.g. 0.00)" style="max-width:140px" step="0.0001" min="0" max="1">
     <input type="number" id="floatMax" placeholder="Float max (e.g. 0.07)" style="max-width:140px" step="0.0001" min="0" max="1">
     <button id="analyzeBtn" onclick="runAnalyze()">Analyze</button>
@@ -554,44 +547,88 @@ h1{
 
   <div class="result" id="result">
     <div class="verdict-box" id="verdictBox">
-      <div class="verdict-label" id="verdictLabel"></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:5px">
+        <div class="verdict-label" id="verdictLabel"></div>
+        <div id="verdictTags" style="display:flex;gap:5px;flex-wrap:wrap;align-items:center"></div>
+      </div>
       <div class="verdict-detail" id="verdictDetail"></div>
     </div>
 
-    <div class="liq-box" id="liveBox" style="display:none">
-      <div>
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px" id="liveBoxTitle">Live listed</div>
-        <div style="font-size:28px;font-weight:600;color:#ddd" id="livePrice">—</div>
-      </div>
-      <div style="flex:1;text-align:center">
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px" id="liveFeeLabel">After fee (net)</div>
-        <div style="font-size:20px;font-weight:500;color:#999" id="liveNet">—</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px">vs buy (profit)</div>
-        <div style="font-size:20px;font-weight:600" id="liveProfit">—</div>
-      </div>
-    </div>
+    <div id="marketCards" style="display:none;margin-bottom:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
 
-    <div class="empire-box" id="empireBox">
-      <h3>Empire Live Listings</h3>
-      <div class="empire-row" id="empireRow"></div>
+        <!-- CSFloat card -->
+        <div style="background:#0c1812;border:1px solid #1c3525;border-radius:6px;padding:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:12px;color:#33ee77;font-weight:700;letter-spacing:.5px;text-transform:uppercase">CSFloat</span>
+            <span style="font-size:10px;color:#3a7050;background:#0c1812;padding:2px 8px;border-radius:3px;border:1px solid #1c3525">2% sale fee</span>
+          </div>
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:#3a6044;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Live floor listed</div>
+            <div style="font-size:26px;font-weight:700;color:#e8eaf0;line-height:1" id="cfLivePrice">—</div>
+          </div>
+          <div style="display:flex;gap:20px">
+            <div>
+              <div style="font-size:10px;color:#3a6044;margin-bottom:2px">After 2% fee</div>
+              <div style="font-size:17px;font-weight:600;color:#9abba8" id="cfNet">—</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#3a6044;margin-bottom:2px">vs entry</div>
+              <div style="font-size:17px;font-weight:700" id="cfProfit">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CSGOEmpire card -->
+        <div style="background:#110c1a;border:1px solid #2e1a44;border-radius:6px;padding:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:12px;color:#bc8cff;font-weight:700;letter-spacing:.5px;text-transform:uppercase">CSGOEmpire</span>
+            <span style="font-size:10px;color:#6a4a9a;background:#110c1a;padding:2px 8px;border-radius:3px;border:1px solid #2e1a44">0% sale fee</span>
+          </div>
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:#6040a0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Live floor listed</div>
+            <div style="font-size:26px;font-weight:700;color:#e8eaf0;line-height:1" id="empLiveFloor">—</div>
+          </div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px">
+            <div>
+              <div style="font-size:10px;color:#6040a0;margin-bottom:2px">Net (0% fee)</div>
+              <div style="font-size:17px;font-weight:600;color:#b0a0cc" id="empNet">—</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#6040a0;margin-bottom:2px">vs entry</div>
+              <div style="font-size:17px;font-weight:700" id="empProfit">—</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:#6040a0;margin-bottom:2px">vs CSFloat 30d</div>
+              <div style="font-size:13px;font-weight:600" id="empSpread">—</div>
+            </div>
+          </div>
+          <div id="empDepth" style="border-top:1px solid #2e1a44;padding-top:7px;font-size:11px;color:#6040a0;display:flex;gap:14px;flex-wrap:wrap"></div>
+        </div>
+      </div>
+
+      <!-- Dips row spans both cards -->
+      <div id="dipsRow" style="display:none;background:#111319;border:1px solid #2a1f1f;border-radius:4px;padding:9px 14px;font-size:12px;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="color:#888;text-transform:uppercase;font-size:10px;letter-spacing:.5px;white-space:nowrap">&#9660; Sold below entry</span>
+        <span id="dipsContent"></span>
+      </div>
     </div>
 
     <div style="background:#151515;border:1px solid #222;border-radius:8px;padding:16px;margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:12px;flex-wrap:wrap">
         <div>
         <h3 style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.8px;margin:0">Price History</h3>
-        <div style="font-size:10px;color:#444;margin-top:4px;max-width:280px;line-height:1.35">Green dashed = live <em>listed</em> for your selected sell site; fee → net profit is in the card above.</div>
+        <div style="font-size:10px;color:#444;margin-top:4px;max-width:380px;line-height:1.5"><strong style="color:#ff5555">&#8212; red</strong> = your entry &nbsp;<strong style="color:#33ee77">&#8212; green</strong> = live listed &nbsp;<span style="color:#33ee7799">&#8212; &#8212; faint</span> = net after fee &nbsp;<span style="color:#444">· red dots = days below entry</span></div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <button class="chart-src-btn active" id="srcFloat" onclick="setChartSource('float')">CSFloat Hist</button>
-          <button class="chart-src-btn" id="srcEmpire" onclick="setChartSource('empire')" style="display:none">Empire Now</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <button class="chart-src-btn active" id="srcFloat" onclick="setChartSource('float')" style="border-color:#1c3525;color:#33ee77">CSFloat history</button>
+          <button class="chart-src-btn" id="srcEmpire" onclick="setChartSource('empire')" style="color:#bc8cff">Empire asks</button>
           <span style="color:#333;font-size:11px">|</span>
-          <div id="timeRangeButtons" style="display:flex;gap:6px">
-            <button class="time-btn" onclick="drawChartRange(7)" style="padding:5px 10px;border-radius:4px;border:1px solid #333;background:#181818;color:#777;font-size:11px;cursor:pointer;transition:all .15s">7d</button>
-            <button class="time-btn" onclick="drawChartRange(30)" style="padding:5px 10px;border-radius:4px;border:1px solid #333;background:#181818;color:#777;font-size:11px;cursor:pointer;transition:all .15s">30d</button>
-            <button class="time-btn active" onclick="drawChartRange(60)" style="padding:5px 10px;border-radius:4px;border:1px solid #4a9;background:#181818;color:#4a9;font-size:11px;cursor:pointer;transition:all .15s">60d</button>
+          <div id="timeRangeButtons" style="display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button" class="time-btn" data-range="7" onclick="drawChartRange(7)" style="padding:5px 10px;border-radius:4px;border:1px solid #333;background:#181818;color:#777;font-size:11px;cursor:pointer">7d</button>
+            <button type="button" class="time-btn" data-range="30" onclick="drawChartRange(30)" style="padding:5px 10px;border-radius:4px;border:1px solid #333;background:#181818;color:#777;font-size:11px;cursor:pointer">30d</button>
+            <button type="button" class="time-btn" data-range="60" onclick="drawChartRange(60)" style="padding:5px 10px;border-radius:4px;border:1px solid #4a9;background:#181818;color:#4a9;font-size:11px;cursor:pointer">60d</button>
+            <button type="button" class="time-btn" data-range="180" onclick="drawChartRange(180)" style="padding:5px 10px;border-radius:4px;border:1px solid #333;background:#181818;color:#777;font-size:11px;cursor:pointer">6m</button>
           </div>
         </div>
       </div>
@@ -600,10 +637,12 @@ h1{
     </div>
 
     <div class="cards" id="windowCards"></div>
+    <p id="cardsFoot" style="display:none;font-size:11px;color:#555;margin:-6px 0 14px;line-height:1.45"></p>
 
-    <div class="liq-box" id="liqBox">
+    <div class="liq-box" id="liqBox" style="flex-wrap:wrap">
       <div class="liq-score" id="liqScore"></div>
       <div class="liq-details" id="liqDetails"></div>
+      <div id="liqExplain" style="display:none;flex:1 1 100%;font-size:12px;color:#8a9aa8;line-height:1.45;margin-top:8px;padding-top:10px;border-top:1px solid #252525"></div>
     </div>
 
     <div class="pump-box" id="pumpBox">
@@ -776,7 +815,7 @@ async function runAnalyze() {
         fade_min_pct: fade_min,
         fade_max_pct: fade_max,
         live_price_override: overrideVal,
-        sell_venue: document.getElementById('sellVenue').value,
+        sell_venue: 'csfloat',
       })
     });
     const d = await resp.json();
@@ -789,67 +828,109 @@ async function runAnalyze() {
     vb.className = 'verdict-box ' + d.verdict;
     document.getElementById('verdictLabel').className = 'verdict-label ' + d.verdict;
     document.getElementById('verdictLabel').textContent = d.verdict;
-    document.getElementById('verdictDetail').textContent = d.verdict_detail;
+    // Compact tag pills — CSFloat & Empire profit, pump, dips
+    const vTags = document.getElementById('verdictTags');
+    const vtItems = [];
+    if (d.live_pct != null) { const c=d.live_pct>=2?'#33ee77':d.live_pct>=0?'#c93':'#c55'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#0c1812;border:1px solid #1c3525;color:'+c+'">CF '+(d.live_pct>0?'+':'')+d.live_pct+'%</span>'); }
+    if (d.empire) { const ep=+((d.empire.floor-price)/price*100).toFixed(1); const c=ep>=2?'#bc8cff':ep>=0?'#c93':'#c55'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#110c1a;border:1px solid #2e1a44;color:'+c+'">Emp '+(ep>0?'+':'')+ep+'%</span>'); }
+    if (d.w30) { const p30=((d.w30.avg*0.98-price)/price*100).toFixed(1); const c=p30>=2?'#4a9':p30>=0?'#c93':'#c55'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#181818;border:1px solid #2a2a2a;color:'+c+'">30d hist '+(p30>0?'+':'')+p30+'%</span>'); }
+    if (d.pump_pct!=null&&d.pump_pct!==0) { const c=Math.abs(d.pump_pct)>15?'#c55':Math.abs(d.pump_pct)>5?'#c93':'#666'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#181818;border:1px solid #2a2a2a;color:'+c+'">Pump '+(d.pump_pct>0?'+':'')+d.pump_pct+'%</span>'); }
+    if (d.dips_7d!=null) { const c=d.dips_7d>0?'#c93':'#4a9'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#181818;border:1px solid #2a2a2a;color:'+c+'">Dips 7d: '+d.dips_7d+'&times;</span>'); }
+    vTags.innerHTML = vtItems.join('');
+    // 2-sentence detail only
+    const vDetail = (d.verdict_detail||'').split(/\. (?=[A-Z])/g).slice(0,2).join('. ').replace(/\.?\s*$/,'')+'.';
+    document.getElementById('verdictDetail').textContent = vDetail;
 
-    // Live sell quote (listed → after venue fee → vs buy)
-    const lb = document.getElementById('liveBox');
-    lb.style.display = 'flex';
-    const venLabel = d.sell_venue_label || 'CSFloat';
-    const feePct = d.sell_fee_pct != null ? d.sell_fee_pct : 2;
-    document.getElementById('liveBoxTitle').textContent = 'Live listed · ' + venLabel;
-    document.getElementById('liveFeeLabel').textContent =
-      feePct === 0 ? 'Net (= listed, 0% sale fee)' : ('After ' + feePct + '% fee (net)');
-    const lp = document.getElementById('liveProfit');
-    if (d.live_price) {
-      document.getElementById('livePrice').textContent = '$' + d.live_price.toFixed(2);
-      document.getElementById('liveNet').textContent = '$' + d.live_net.toFixed(2);
-      lp.textContent = '$' + d.live_profit.toFixed(2) + ' (' + d.live_pct + '%)';
-      lp.style.color = d.live_pct >= 2 ? '#4a9' : d.live_pct >= 0 ? '#c93' : '#c55';
+    // Market cards
+    document.getElementById('marketCards').style.display = 'block';
+
+    // CSFloat card
+    const cfPrice = d.live_price;
+    const cfNetVal = cfPrice != null ? +(cfPrice * 0.98).toFixed(2) : null;
+    const cfPft = cfNetVal != null ? +(cfNetVal - price).toFixed(2) : null;
+    const cfPct2 = cfPft != null ? +((cfPft / price) * 100).toFixed(1) : null;
+    document.getElementById('cfLivePrice').textContent = cfPrice != null ? '$' + cfPrice.toFixed(2) : '—';
+    document.getElementById('cfNet').textContent = cfNetVal != null ? '$' + cfNetVal.toFixed(2) : '—';
+    const cfPEl = document.getElementById('cfProfit');
+    if (cfPct2 != null) {
+      cfPEl.textContent = (cfPft >= 0 ? '+$' : '$') + cfPft.toFixed(2) + ' (' + (cfPct2 > 0 ? '+' : '') + cfPct2 + '%)';
+      cfPEl.style.color = cfPct2 >= 2 ? '#33ee77' : cfPct2 >= 0 ? '#c93' : '#c55';
     } else {
-      document.getElementById('livePrice').textContent = '—';
-      document.getElementById('liveNet').textContent = '—';
-      lp.textContent = 'No live quote (keys / listings)';
-      lp.style.color = '#666';
+      cfPEl.textContent = 'No listing'; cfPEl.style.color = '#444';
     }
 
-    // Empire box
-    const empBox = document.getElementById('empireBox');
-    const empRow = document.getElementById('empireRow');
+    // Empire card
     if (d.empire) {
-      empBox.style.display = 'block';
-      document.getElementById('srcEmpire').style.display = 'inline-block';
-      const gap = d.w30 ? ((d.w30.avg - d.empire.avg) / d.empire.avg * 100).toFixed(1) : null;
-      empRow.innerHTML =
-        '<div class="empire-item"><div class="e-lbl">Floor</div><div class="e-val">$' + d.empire.floor.toFixed(2) + '</div></div>' +
-        '<div class="empire-item"><div class="e-lbl">Avg</div><div class="e-val">$' + d.empire.avg.toFixed(2) + '</div></div>' +
-        '<div class="empire-item"><div class="e-lbl">High</div><div class="e-val">$' + d.empire.high.toFixed(2) + '</div></div>' +
-        '<div class="empire-item"><div class="e-lbl">Listings</div><div class="e-val">' + d.empire.count + '</div></div>' +
-        (gap ? '<div class="empire-item"><div class="e-lbl">vs CSFloat 30d</div><div class="e-val" style="color:' + (parseFloat(gap) > 3 ? '#4a9' : '#c93') + '">' + (gap > 0 ? '+' : '') + gap + '%</div></div>' : '');
+      const ef = d.empire.floor;
+      const epPft = +(ef - price).toFixed(2);
+      const epPct = +((epPft / price) * 100).toFixed(1);
+      document.getElementById('empLiveFloor').textContent = '$' + ef.toFixed(2);
+      document.getElementById('empNet').textContent = '$' + ef.toFixed(2);
+      const epEl = document.getElementById('empProfit');
+      epEl.textContent = (epPft >= 0 ? '+$' : '$') + epPft.toFixed(2) + ' (' + (epPct > 0 ? '+' : '') + epPct + '%)';
+      epEl.style.color = epPct >= 2 ? '#bc8cff' : epPct >= 0 ? '#c93' : '#c55';
+      const gap30 = d.w30 ? ((d.w30.avg - d.empire.avg) / d.empire.avg * 100).toFixed(1) : null;
+      const spEl = document.getElementById('empSpread');
+      if (gap30 != null) {
+        spEl.innerHTML = '<span style="color:' + (parseFloat(gap30) > 3 ? '#33ee77' : '#c93') + '">' + (gap30 > 0 ? '+' : '') + gap30 + '%</span>';
+      } else { spEl.textContent = '—'; }
+      document.getElementById('empDepth').innerHTML =
+        '<span>Avg $' + d.empire.avg.toFixed(2) + '</span>' +
+        '<span>High $' + d.empire.high.toFixed(2) + '</span>' +
+        '<span>' + d.empire.count + ' listing' + (d.empire.count !== 1 ? 's' : '') + '</span>';
       chartEmpire = d.empire;
     } else {
-      empBox.style.display = 'none';
+      document.getElementById('empLiveFloor').textContent = '—';
+      document.getElementById('empNet').textContent = '—';
+      document.getElementById('empProfit').textContent = '—'; document.getElementById('empProfit').style.color = '#444';
+      document.getElementById('empSpread').textContent = '—';
+      document.getElementById('empDepth').innerHTML = '<span style="color:#444">No Empire listings found</span>';
       chartEmpire = null;
-      document.getElementById('srcEmpire').style.display = 'none';
     }
 
-    const sellShort = venLabel.replace(/^CSGO\s+/i, '').slice(0, 14);
-    document.getElementById('windowCards').innerHTML =
-      windowCard('7 Days', d.w7, price, d.live_price, sellShort) +
-      windowCard('30 Days', d.w30, price, d.live_price, sellShort) +
-      windowCard('60 Days', d.w60, price, d.live_price, sellShort);
+    // Dips below entry
+    const dr = document.getElementById('dipsRow');
+    if (d.dips_7d != null || d.dips_30d != null) {
+      dr.style.display = 'flex';
+      const dp = [];
+      if (d.dips_7d != null) dp.push('<span style="color:'+(d.dips_7d>0?'#f0883e':'#4a9')+'"><strong>'+d.dips_7d+'</strong>&times; in 7d</span>');
+      if (d.dips_30d != null) dp.push('<span style="color:'+(d.dips_30d>3?'#f0883e':'#4a9')+'"><strong>'+d.dips_30d+'</strong>&times; in 30d</span>');
+      if (d.drop_prob != null) dp.push('<span style="color:'+(d.drop_prob>20?'#c55':d.drop_prob>10?'#f0883e':'#666')+'">'+d.drop_prob+'% of days in last 30d</span>');
+      document.getElementById('dipsContent').innerHTML = dp.join('<span style="color:#333"> &middot; </span>');
+    } else {
+      dr.style.display = 'none';
+    }
+
+    // History window cards (CSFloat sales, fee already deducted)
+    const cf = document.getElementById('cardsFoot');
+    if (d.w7 || d.w30) {
+      document.getElementById('windowCards').innerHTML =
+        windowCard('7 Days', d.w7, price, cfPrice, 'CSFloat') +
+        windowCard('30 Days', d.w30, price, cfPrice, 'CSFloat') +
+        windowCard('60 Days', d.w60, price, cfPrice, 'CSFloat') +
+        windowCard('6 Months', d.w180, price, cfPrice, 'CSFloat');
+      cf.style.display = 'block';
+      cf.textContent = 'CSFloat historical sales — all net values already have the 2% fee deducted. Empire has 0% fee so its floor = net.';
+    } else {
+      document.getElementById('windowCards').innerHTML = '';
+      cf.style.display = 'none';
+    }
 
     // Liquidity
     const liq = d.liquidity;
+    const liqEx = document.getElementById('liqExplain');
     if (liq && liq.score !== undefined) {
       document.getElementById('liqScore').textContent = liq.score;
       document.getElementById('liqScore').className = 'liq-score ' + liq.grade;
       document.getElementById('liqDetails').innerHTML =
         'Grade <span class="liq-grade">' + liq.grade + '</span>';
-    }
+      if (d.liquidity_eli5) { liqEx.style.display = 'block'; liqEx.textContent = d.liquidity_eli5; }
+      else { liqEx.style.display = 'none'; }
+    } else { liqEx.style.display = 'none'; }
 
-    // Chart (horizontal live line uses same listed price as selected sell site)
-    chartLiveVenueLabel = venLabel;
-    if (d.chart && d.chart.length) drawChart(d.chart, price, d.live_price);
+    // Chart — green line = CSFloat floor, red = entry
+    chartLiveVenueLabel = 'CSFloat';
+    if (d.chart && d.chart.length) drawChart(d.chart, price, d.live_price, d.sell_fee_pct);
 
     // Trend notes
     const tn = document.getElementById('trendNotes');
@@ -870,7 +951,7 @@ async function runAnalyze() {
 
 // Price chart with time range filtering
 let chartData = null, chartBuyPrice = null, chartLivePrice = null, chartDaysRange = 60, hoveredIdx = -1;
-let chartEmpire = null, chartSource = 'float';
+let chartEmpire = null, chartSource = 'float', chartFee = 2;
 let chartLiveVenueLabel = 'CSFloat';
 
 function liveChartTag(lbl) {
@@ -883,17 +964,24 @@ function liveChartTag(lbl) {
 
 function setChartSource(src) {
   chartSource = src;
-  document.getElementById('srcFloat').classList.toggle('active', src === 'float');
-  document.getElementById('srcEmpire').classList.toggle('active', src === 'empire');
+  const sf = document.getElementById('srcFloat');
+  const se = document.getElementById('srcEmpire');
+  sf.classList.toggle('active', src === 'float');
+  se.classList.toggle('active', src === 'empire');
+  sf.style.borderColor = src === 'float' ? '#1c3525' : '#333';
+  sf.style.color = src === 'float' ? '#33ee77' : '#555';
+  se.style.borderColor = src === 'empire' ? '#2e1a44' : '#333';
+  se.style.color = src === 'empire' ? '#bc8cff' : '#555';
   document.getElementById('timeRangeButtons').style.opacity = src === 'float' ? '1' : '0.3';
   if (src === 'empire') drawEmpireChart();
   else drawChartRange(chartDaysRange);
 }
 
-function drawChart(data, buyPrice, livePrice) {
+function drawChart(data, buyPrice, livePrice, feePct) {
   chartData = data;
   chartBuyPrice = buyPrice;
   chartLivePrice = livePrice;
+  chartFee = feePct != null ? feePct : 2;
   chartDaysRange = 60;
   chartSource = 'float';
   document.getElementById('srcFloat').classList.add('active');
@@ -921,7 +1009,8 @@ function drawEmpireChart() {
   }
 
   const prices = chartEmpire.prices;
-  const minP = Math.min(...prices, chartBuyPrice) * 0.97;
+  const afterFeeRefE = chartLivePrice ? chartLivePrice * (1 - chartFee / 100) : 0;
+  const minP = Math.min(...prices, chartBuyPrice, afterFeeRefE || chartBuyPrice) * 0.97;
   const maxP = Math.max(...prices, chartBuyPrice, chartLivePrice || 0) * 1.03;
   const yScale = v => pad.t + ch - ((v - minP) / (maxP - minP)) * ch;
   const barW = Math.max(4, Math.floor(cw / prices.length) - 2);
@@ -951,19 +1040,23 @@ function drawEmpireChart() {
     ctx.strokeRect(x, y, barW, bh);
   });
 
-  // Buy price line
-  ctx.strokeStyle = '#c5555588'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
+  // ENTRY price line — bright solid red
+  ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.setLineDash([]);
   ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartBuyPrice)); ctx.lineTo(W - pad.r, yScale(chartBuyPrice)); ctx.stroke();
-  ctx.fillStyle = '#c55'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-  ctx.fillText('BUY $' + chartBuyPrice.toFixed(0), W - pad.r + 4, yScale(chartBuyPrice) + 4);
-  ctx.setLineDash([]);
+  ctx.fillStyle = '#ff5555'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('ENTRY $' + chartBuyPrice.toFixed(2), W - pad.r + 4, yScale(chartBuyPrice) + 4);
 
-  // Live listed line (selected sell site)
+  // LIVE listed + after-fee lines
   if (chartLivePrice) {
-    ctx.strokeStyle = '#4a944a88'; ctx.lineWidth = 1.5; ctx.setLineDash([4,4]);
+    const afterFeePE = chartLivePrice * (1 - chartFee / 100);
+    ctx.strokeStyle = '#33ee77'; ctx.lineWidth = 2; ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartLivePrice)); ctx.lineTo(W - pad.r, yScale(chartLivePrice)); ctx.stroke();
-    ctx.fillStyle = '#4a9'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
+    ctx.fillStyle = '#33ee77'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(2), W - pad.r + 4, yScale(chartLivePrice) - 5);
+    ctx.strokeStyle = '#33ee7755'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(pad.l, yScale(afterFeePE)); ctx.lineTo(W - pad.r, yScale(afterFeePE)); ctx.stroke();
+    ctx.fillStyle = '#33ee7799'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('net $' + afterFeePE.toFixed(2), W - pad.r + 4, yScale(afterFeePE) + 4);
     ctx.setLineDash([]);
   }
 
@@ -998,14 +1091,16 @@ function drawChartRange(days) {
   const pad = {t:20,r:60,b:30,l:60};
   const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
 
-  // Filter data by days
-  let pts = [...chartData].reverse().slice(0, days);
+  const take = Math.min(days, chartData.length);
+  let pts = [...chartData].slice(0, take).reverse();
   if (pts.length === 0) pts = [...chartData].reverse();
   const prices = pts.map(p => p.avg);
-  const minP = Math.min(...prices, chartBuyPrice) * 0.95;
+  const afterFeeRef = chartLivePrice ? chartLivePrice * (1 - chartFee / 100) : 0;
+  const minP = Math.min(...prices, chartBuyPrice, afterFeeRef || chartBuyPrice) * 0.95;
   const maxP = Math.max(...prices, chartBuyPrice, chartLivePrice || 0) * 1.05;
 
-  const xScale = (i) => pad.l + (i / (pts.length - 1)) * cw;
+  const xDen = Math.max(pts.length - 1, 1);
+  const xScale = (i) => pad.l + (i / xDen) * cw;
   const yScale = (v) => pad.t + ch - ((v - minP) / (maxP - minP)) * ch;
 
   ctx.clearRect(0, 0, W, H);
@@ -1027,19 +1122,25 @@ function drawChartRange(days) {
     ctx.fillText(pts[i].day.slice(5), xScale(i), H - 6);
   }
 
-  // BUY price line
-  ctx.strokeStyle = '#c5555544'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+  // ENTRY price line — bright solid red
+  ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.setLineDash([]);
   ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartBuyPrice)); ctx.lineTo(W - pad.r, yScale(chartBuyPrice)); ctx.stroke();
-  ctx.fillStyle = '#c55'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-  ctx.fillText('BUY $' + chartBuyPrice.toFixed(0), W - pad.r + 4, yScale(chartBuyPrice) + 4);
-  ctx.setLineDash([]);
+  ctx.fillStyle = '#ff5555'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('ENTRY $' + chartBuyPrice.toFixed(2), W - pad.r + 4, yScale(chartBuyPrice) + 4);
 
-  // LIVE listed line (selected sell site — net after fee is in live card)
+  // LIVE listed + after-fee lines
   if (chartLivePrice) {
-    ctx.strokeStyle = '#4a944a44'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+    const afterFeeP = chartLivePrice * (1 - chartFee / 100);
+    // Live listed — bright solid green
+    ctx.strokeStyle = '#33ee77'; ctx.lineWidth = 2; ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(pad.l, yScale(chartLivePrice)); ctx.lineTo(W - pad.r, yScale(chartLivePrice)); ctx.stroke();
-    ctx.fillStyle = '#4a9'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(0), W - pad.r + 4, yScale(chartLivePrice) + 4);
+    ctx.fillStyle = '#33ee77'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(liveChartTag(chartLiveVenueLabel) + ' $' + chartLivePrice.toFixed(2), W - pad.r + 4, yScale(chartLivePrice) - 5);
+    // After-fee net — lighter dashed green
+    ctx.strokeStyle = '#33ee7755'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.moveTo(pad.l, yScale(afterFeeP)); ctx.lineTo(W - pad.r, yScale(afterFeeP)); ctx.stroke();
+    ctx.fillStyle = '#33ee7799'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('net $' + afterFeeP.toFixed(2), W - pad.r + 4, yScale(afterFeeP) + 4);
     ctx.setLineDash([]);
   }
 
@@ -1061,11 +1162,12 @@ function drawChartRange(days) {
   for (let i = 1; i < pts.length; i++) ctx.lineTo(xScale(i), yScale(prices[i]));
   ctx.stroke();
 
-  // Dots
+  // Dots — red if below entry price, otherwise dim gray
   for (let i = 0; i < pts.length; i++) {
-    ctx.fillStyle = i === hoveredIdx ? '#4a9' : '#999';
+    const belowEntry = prices[i] < chartBuyPrice;
+    ctx.fillStyle = i === hoveredIdx ? '#fff' : belowEntry ? '#ff555588' : '#44444499';
     ctx.beginPath();
-    ctx.arc(xScale(i), yScale(prices[i]), i === hoveredIdx ? 4 : 2, 0, Math.PI * 2);
+    ctx.arc(xScale(i), yScale(prices[i]), i === hoveredIdx ? 4 : belowEntry ? 3 : 2, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1093,7 +1195,8 @@ function drawChartRange(days) {
     tt.style.display = 'block';
     tt.style.left = (e.pageX + 12) + 'px';
     tt.style.top = (e.pageY - 40) + 'px';
-    tt.innerHTML = '<strong>' + p.day + '</strong><br>Avg: $' + p.avg.toFixed(2) + '<br>Sales: ' + p.sales;
+    const belowNote = p.avg < chartBuyPrice ? '<br><span style="color:#ff5555">&#9660; below entry &#8722;$' + (chartBuyPrice - p.avg).toFixed(2) + '</span>' : '';
+    tt.innerHTML = '<strong>' + p.day + '</strong><br>Avg: $' + p.avg.toFixed(2) + '<br>Sales: ' + p.sales + belowNote;
     // Redraw to highlight dot
     drawChartRange(chartDaysRange);
   };
@@ -1103,10 +1206,11 @@ function drawChartRange(days) {
     drawChartRange(chartDaysRange);
   };
 
-  // Update button states
-  document.querySelectorAll('.time-btn').forEach(btn => {
-    btn.classList.remove('active');
-    if (btn.textContent === days + 'd') btn.classList.add('active');
+  document.querySelectorAll('#timeRangeButtons .time-btn').forEach(btn => {
+    const r = +btn.getAttribute('data-range');
+    btn.classList.toggle('active', r === days);
+    btn.style.borderColor = r === days ? '#4a9' : '#333';
+    btn.style.color = r === days ? '#4a9' : '#777';
   });
 }
 

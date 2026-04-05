@@ -9,6 +9,43 @@ from config import SELL_VENUES
 from flip_analyzer import get_history, liquidity_score, CSFLOAT_FEE
 from trend import fetch_float_price, parse_sales
 
+
+def _verdict_eli5(verdict: str, sell_label: str, live_pct: float | None, live_price: float | None) -> str:
+    if verdict == "INFO":
+        return (
+            f"Like a price tag with no yesterday: we only know what {sell_label} asks today — "
+            "there is no float/history graph for this type of item here."
+        )
+    if verdict == "BUY":
+        return (
+            f"Simple version: if you sell on {sell_label} for about what we show today, you can make a little extra "
+            "after fees — and enough people trade this that you are not stuck holding it forever."
+        )
+    if verdict == "RISKY":
+        return (
+            f"Simple version: the math can work on {sell_label}, but the price has been jumpy or dipped near what "
+            "you pay — like a bouncy ball, it might land lower when you need to sell."
+        )
+    return (
+        "Simple version: after fees you do not get enough extra money vs what you pay, or the price looks too hype-y — "
+        "like paying full price for candy that usually goes on sale."
+    )
+
+
+def _liquidity_eli5(liq: dict | None) -> str:
+    if not liq or liq.get("score") is None:
+        return ""
+    g, s = liq.get("grade", "?"), liq.get("score", 0)
+    tail = {
+        "A": "So many sales lately that you should find a buyer quickly.",
+        "B": "Pretty popular — you might wait a couple days, not weeks.",
+        "C": "Okay, but you might wait a while like standing in a slow line.",
+        "D": "Few buyers — you could be stuck past a trade lock.",
+        "F": "Almost nobody buying — easy to get stuck with it.",
+    }.get(g, "Check sales speed before you buy.")
+    return f"The big number ({s}) is how easy it is to resell. Grade {g}: {tail}"
+
+
 # Collection metadata: name -> (type, year, volatile, note)
 # type: "operation" = operation drop, "case" = case collection, "rare" = discontinued/rare pool
 COLLECTIONS = {
@@ -404,6 +441,8 @@ def run_analysis(
         return {
             "item": item_name, "buy_price": buy_price, "verdict": "INFO",
             "verdict_detail": f"No float value — live {sell_label} only (no historical data)",
+            "verdict_eli5": _verdict_eli5("INFO", sell_label, live_pct, live_price),
+            "liquidity_eli5": "",
             "live_price": live_price,
             "live_net": live_net,
             "live_profit": live_profit,
@@ -411,7 +450,7 @@ def run_analysis(
             "sell_venue": sell_venue,
             "sell_venue_label": sell_label,
             "sell_fee_pct": round(sell_fee * 100, 2),
-            "w7": None, "w30": None, "w60": None, "liquidity": None, "chart": [],
+            "w7": None, "w30": None, "w60": None, "w180": None, "liquidity": None, "chart": [],
             "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
         }
 
@@ -493,6 +532,7 @@ def run_analysis(
         }
 
     w7, w30, w60 = wstats(7), wstats(30), wstats(60)
+    w180 = wstats(180)
     liq = liquidity_score(w7, w30, w60)
 
     # Get marketplace listing count (only called on analyze)
@@ -574,25 +614,35 @@ def run_analysis(
     # Drop probability: % of days in last 30d where price was below buy
     drop_prob = round((dips_30d / days_30) * 100, 1) if days_30 > 0 else 0
 
-    # Composite profit score using multiple sources
-    profit_scores = []
-    if live_pct is not None:
-        profit_scores.append(("live", live_pct))
+    hist_pcts: list[float] = []
+    w7_pct = w30_pct = None
     if w7:
         w7_pct = round((w7["avg"] * (1 - CSFLOAT_FEE) - buy_price) / buy_price * 100, 1)
-        profit_scores.append(("7d", w7_pct))
+        hist_pcts.append(w7_pct)
     if w30:
         w30_pct = round((w30["avg"] * (1 - CSFLOAT_FEE) - buy_price) / buy_price * 100, 1)
-        profit_scores.append(("30d", w30_pct))
+        hist_pcts.append(w30_pct)
+    avg_hist = round(sum(hist_pcts) / len(hist_pcts), 1) if hist_pcts else 0.0
 
-    # Best and worst case
+    profit_scores: list[tuple[str, float]] = []
+    if live_pct is not None:
+        profit_scores.append((f"live_{sell_venue}", live_pct))
+    if w7_pct is not None:
+        profit_scores.append(("csfloat_7d", w7_pct))
+    if w30_pct is not None:
+        profit_scores.append(("csfloat_30d", w30_pct))
+
     all_pcts = [p for _, p in profit_scores]
     best_pct = max(all_pcts) if all_pcts else 0
     worst_pct = min(all_pcts) if all_pcts else 0
     avg_pct = round(sum(all_pcts) / len(all_pcts), 1) if all_pcts else 0
 
-    # Use avg of all sources for verdict, not just live
-    real_pct = avg_pct
+    if live_pct is not None and avg_hist:
+        real_pct = round(0.55 * live_pct + 0.45 * avg_hist, 1)
+    elif live_pct is not None:
+        real_pct = live_pct
+    else:
+        real_pct = avg_pct
     sources_str = " / ".join(f"{s}={p}%" for s, p in profit_scores)
 
     # --- Verdict label ---
@@ -613,36 +663,37 @@ def run_analysis(
     else:
         verdict = "SKIP"
 
-    # --- Narrative verdict_detail ---
+    # --- Narrative verdict_detail (sell site first; CSFloat history = reference only) ---
     lines = []
-
-    # 1. Live price situation
     fee_pct_disp = int(sell_fee * 100) if sell_fee * 100 == int(sell_fee * 100) else round(sell_fee * 100, 2)
+
+    lines.append(f"Your plan: sell on {sell_label}. Verdict blends that live quote (~55%) with CSFloat sale history (~45%).")
     if live_pct is not None:
         if live_pct < 0:
             lines.append(
-                f"Live {sell_label} at ${live_price:.0f} (listed) — after {fee_pct_disp}% fee net ${live_net:.0f} vs buy ${buy_price:.0f} ({live_pct:+.1f}%)."
+                f"{sell_label} now: listed ${live_price:.0f} → after {fee_pct_disp}% fee net ${live_net:.0f} vs your ${buy_price:.0f} buy ({live_pct:+.1f}%)."
             )
         elif live_pct < 2:
             lines.append(
-                f"Live {sell_label} at ${live_price:.0f} — after {fee_pct_disp}% fee only {live_pct:+.1f}% vs buy; tight."
+                f"{sell_label} now: listed ${live_price:.0f} → after {fee_pct_disp}% fee only {live_pct:+.1f}% headroom vs buy."
             )
         else:
             lines.append(
-                f"Live {sell_label} at ${live_price:.0f} — after {fee_pct_disp}% fee net ${live_net:.0f} ({live_pct:+.1f}% vs buy)."
+                f"{sell_label} now: listed ${live_price:.0f} → net ${live_net:.0f} after fee ({live_pct:+.1f}% vs buy)."
             )
+    else:
+        lines.append(f"No live {sell_label} listing right now — keys, stock, or API; CSFloat history below is your best hint.")
 
-    # 2. Historical context
     if w30:
-        w30_pct_r = round((w30["avg"] * 0.98 - buy_price) / buy_price * 100, 1)
+        w30_pct_r = round((w30["avg"] * (1 - CSFLOAT_FEE) - buy_price) / buy_price * 100, 1)
         if w30_pct_r >= 5:
-            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — market consistently supports this price.")
+            lines.append(f"CSFloat history (reference): 30d typical ~${w30['avg']:.0f} → +{w30_pct_r}% vs buy after 2% fee.")
         elif w30_pct_r >= 2:
-            lines.append(f"30d avg ${w30['avg']:.0f} = +{w30_pct_r}% — thin but positive margin historically.")
+            lines.append(f"CSFloat history: 30d typical ~${w30['avg']:.0f} → thin +{w30_pct_r}% vs buy after fee.")
         else:
-            lines.append(f"30d avg ${w30['avg']:.0f} = {w30_pct_r:+}% — historically barely profitable or losing at this buy.")
+            lines.append(f"CSFloat history: 30d typical ~${w30['avg']:.0f} → {w30_pct_r:+}% vs buy after fee (weak).")
 
-    # 3. Risk factors
+    # Risk factors
     if pump > 15:
         lines.append(f"Price is PUMPED {pump:.0f}% above 30d avg — highly likely to correct during your 7d lock.")
     if dips_7d > 0:
@@ -667,20 +718,27 @@ def run_analysis(
         else:
             lines.append(f"Empire avg ${empire['avg']:.0f} ({empire['count']} live listings).")
 
-    # 6. Bottom line
     if verdict == "BUY":
-        max_safe = round(w30["avg"] * 0.98 / 1.02, 0) if w30 else buy_price
-        lines.append(f"Buy at or below ${max_safe:.0f} for safe 2%+ margin.")
+        if live_net:
+            max_safe = round(live_net / 1.02, 0)
+            lines.append(f"On {sell_label}: pay ≤ ${max_safe:.0f} to keep ~2% vs today’s net after fee.")
+        elif w30:
+            max_safe = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.02, 0)
+            lines.append(f"No live net — CSFloat 30d net ≈ ${max_safe:.0f} max buy for ~2% if you exit CSFloat.")
+        else:
+            lines.append("Lock in live quote before sizing buy.")
     elif verdict == "SKIP" and real_pct < 2 and w30:
-        target = round(w30["avg"] * 0.98 / 1.03, 0)
-        lines.append(f"Need to pay below ${target:.0f} to clear 3% margin — pass at ${buy_price:.0f}.")
+        target = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.03, 0)
+        lines.append(f"Need < ${target:.0f} paid (CSFloat 30d net basis) for 3% — skip at ${buy_price:.0f}.")
     elif verdict == "RISKY" and live_pct is not None and live_pct < 0 and w30:
-        target = round(w30["avg"] * 0.98 / 1.04, 0)
-        lines.append(f"Wait for live price to rise, or buy below ${target:.0f} for adequate buffer.")
+        target = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.04, 0)
+        lines.append(f"Live weak — wait or pay < ${target:.0f} (CSFloat-history pad).")
     elif verdict == "SKIP" and pump > 15:
-        lines.append(f"Wait for pump to cool — 30d avg ${w30['avg']:.0f} is the real floor to target.")
+        lines.append(f"Pump cooling: aim near CSFloat 30d ~${w30['avg']:.0f} before buying.")
 
-    verdict_detail = " ".join(lines) if lines else f"Avg profit {real_pct}% across {sources_str}."
+    verdict_detail = " ".join(lines) if lines else f"Blend {real_pct}% ({sources_str})."
+    verdict_eli5 = _verdict_eli5(verdict, sell_label, live_pct, live_price)
+    liquidity_eli5 = _liquidity_eli5(liq)
 
     # Trend analysis
     trend_notes = []
@@ -763,8 +821,8 @@ def run_analysis(
                 "type": "info",
             })
 
-    # Chart data (last 60 days)
-    chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:60]]
+    cap = min(len(data), 400)
+    chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:cap]]
 
     return {
         "item": item_name, "buy_price": buy_price,
@@ -773,9 +831,13 @@ def run_analysis(
         "sell_venue_label": sell_label,
         "sell_fee_pct": round(sell_fee * 100, 2),
         "w7": window_result(w7), "w30": window_result(w30), "w60": window_result(w60),
+        "w180": window_result(w180),
         "liquidity": liq, "pump_pct": pump, "trend_notes": trend_notes,
-        "chart": chart_data, "volatility": volatility, "drop_prob": drop_prob,
+        "chart": chart_data,
+        "volatility": volatility, "drop_prob": drop_prob,
         "dips_7d": dips_7d, "dips_30d": dips_30d,
         "verdict": verdict, "verdict_detail": verdict_detail,
+        "verdict_eli5": verdict_eli5,
+        "liquidity_eli5": liquidity_eli5,
         "empire": empire,
     }
