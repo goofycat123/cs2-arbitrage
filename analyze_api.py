@@ -177,26 +177,35 @@ def _fetch_empire_listings(item_name: str) -> dict | None:
 
 def _fetch_parsed_sales(market_hash_name: str) -> list:
     """Individual CSFloat sales (timestamp + USD price). Empty if API fails."""
+    import time as _time
     try:
         from config import FLOAT_API_KEY
         from rate_limiter import wait_if_needed
 
         if not FLOAT_API_KEY:
             return []
-        wait_if_needed("float")
-        resp = httpx.get(
-            "https://csfloat.com/api/v1/history/sales",
-            headers={"Authorization": FLOAT_API_KEY},
-            params={"market_hash_name": market_hash_name, "limit": 1000},
-            timeout=25,
-        )
-        if resp.status_code != 200:
+        for attempt in range(3):
+            wait_if_needed("float")
+            resp = httpx.get(
+                "https://csfloat.com/api/v1/history/sales",
+                headers={"Authorization": FLOAT_API_KEY},
+                params={"market_hash_name": market_hash_name, "limit": 1000},
+                timeout=25,
+            )
+            if resp.status_code == 200:
+                raw = resp.json()
+                rows = raw if isinstance(raw, list) else raw.get("data", raw.get("sales", []))
+                return parse_sales(rows)
+            if resp.status_code in (401, 403) and attempt < 2:
+                _time.sleep(2)
+                continue
+            if resp.status_code == 429 and attempt < 2:
+                _time.sleep(15)
+                continue
             return []
-        raw = resp.json()
-        rows = raw if isinstance(raw, list) else raw.get("data", raw.get("sales", []))
-        return parse_sales(rows)
     except Exception:
-        return []
+        pass
+    return []
 
 
 def _window_stats_from_raw_sales(parsed: list, days: int) -> dict | None:
@@ -439,120 +448,23 @@ def run_analysis(
         if fade_max_pct is not None:
             float_min = round(max(0.0, (100 - fade_max_pct) * mwf / 10), 4)
 
-    # Weapon prefixes — anything with | but NOT starting with one of these is an agent/character
-    _WEAPON_PREFIXES = (
-        "AK-47","M4A4","M4A1","AWP","USP","Glock","P250","Desert Eagle","MP9","MAC-10",
-        "P90","MP5","UMP-45","PP-Bizon","MP7","XM1014","Nova","Sawed-Off","MAG-7","Negev",
-        "M249","SSG 08","SCAR-20","G3SG1","SG 553","AUG","FAMAS","Galil","Dual Berettas",
-        "Five-SeveN","Tec-9","CZ75","R8 Revolver","Zeus","★",
-    )
-    _NO_FLOAT_KW = (
-        "Charm","Sticker","Vanilla","Skeleton Key","Patch","Collectible",
-        "Case","Capsule","Package","Souvenir","Graffiti","Pin","Coin","Music Kit","Tool",
-    )
-    # Agents: have " | " but base name is not a weapon
-    _is_agent = (
-        " | " in item_name
-        and not any(item_name.startswith(p) for p in _WEAPON_PREFIXES)
-    )
-    has_float = not (any(kw in item_name for kw in _NO_FLOAT_KW) or _is_agent)
+    # Detect if item has float values (charms, stickers, vanilla knives don't)
+    no_float_keywords = ["Charm", "Sticker", "Vanilla", "Skeleton Key", "Agent", "Patch", "Collectible"]
+    has_float = not any(keyword in item_name for keyword in no_float_keywords)
 
     if not has_float:
-        # Commodity items (cases, stickers, capsules, etc.) — no float, but full price history
+        # No-float items: return live price only, no history
         live_price, live_price_error = _fetch_live_listed_for_venue(
             item_name, sell_venue, None, None, live_price_override
         )
         live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
         live_profit = round(live_net - buy_price, 2) if live_net is not None else None
         live_pct = round((live_profit / buy_price) * 100, 1) if live_profit is not None else None
-
-        # Fetch price history (graph + individual sales)
-        commodity_chart = []
-        w7c = w30c = w60c = w180c = None
-        commodity_liq = None
-        empire_c = _fetch_empire_listings(item_name)
-        try:
-            cdata = get_history(item_name)
-            if cdata:
-                cdata = sorted(cdata, key=lambda x: x["day"], reverse=True)
-                parsed_c = _fetch_parsed_sales(item_name)
-
-                def wstats_c(days):
-                    raw = _window_stats_from_raw_sales(parsed_c, days)
-                    if raw:
-                        return raw
-                    s = cdata[:days]
-                    if not s:
-                        return None
-                    prices = [d["avg_price"] / 100 for d in s]
-                    counts = [d["count"] for d in s]
-                    import statistics as _st
-                    avg = sum(p * c for p, c in zip(prices, counts)) / max(sum(counts), 1)
-                    return {
-                        "avg": round(avg, 2),
-                        "median": round(avg, 2),
-                        "low": round(min(prices), 2),
-                        "high": round(max(prices), 2),
-                        "sales": sum(counts),
-                        "days": len(s),
-                        "basis": "graph",
-                    }
-
-                w7c = wstats_c(7)
-                w30c = wstats_c(30)
-                w60c = wstats_c(60)
-                w180c = wstats_c(180)
-                commodity_liq = liquidity_score(w7c, w30c, w60c)
-                commodity_chart = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]}
-                                    for d in cdata[:400]]
-        except Exception:
-            pass
-
-        def _window_result_c(w):
-            if not w:
-                return None
-            net_s = w["avg"] * (1 - sell_fee)
-            profit = net_s - buy_price
-            pct = (profit / buy_price) * 100
-            buffer = ((w["low"] - buy_price) / buy_price) * 100
-            return {**w, "net_sell": round(net_s, 2), "profit": round(profit, 2), "pct": round(pct, 1), "buffer": round(buffer, 1)}
-
-        # Verdict detail for commodities
-        detail_parts = []
-        if live_pct is not None:
-            sign = "+" if live_pct >= 0 else ""
-            detail_parts.append(
-                f"Floor ${live_price:.2f} on {sell_label} -> net ${live_net:.2f} after {int(sell_fee*100)}% fee = {sign}{live_pct:.1f}% vs your ${buy_price:.2f} buy."
-            )
-        elif w30c:
-            w30n = round(w30c["avg"] * (1 - sell_fee), 2)
-            w30p = round((w30n - buy_price) / buy_price * 100, 1)
-            detail_parts.append(
-                f"No live floor right now. 30d avg ${w30c['avg']:.2f} -> net ${w30n:.2f} after fee = {'+' if w30p >= 0 else ''}{w30p:.1f}% vs ${buy_price:.2f} buy."
-            )
-        else:
-            detail_parts.append(f"No price data available on {sell_label}.")
-        if w30c:
-            pump_c = round(((w7c["avg"] / w30c["avg"]) - 1) * 100, 1) if w7c and w30c else 0
-            if abs(pump_c) > 10:
-                detail_parts.append(f"Price {'up' if pump_c > 0 else 'down'} {abs(pump_c):.0f}% vs 30d avg — {'possible pump' if pump_c > 0 else 'declining'}.")
-            elif commodity_liq and isinstance(commodity_liq, dict):
-                g = commodity_liq.get("grade", "?")
-                spd = commodity_liq.get("spd_7", 0)
-                liq_txt = {"A": "sells daily", "B": "1-3 day wait", "C": "up to a week", "D": "slow mover", "F": "illiquid"}.get(g, "")
-                detail_parts.append(f"Liquidity {g} ({spd}/day — {liq_txt}).")
-
-        trend_notes_c = [{"text": "Commodity — no float value (case, sticker, capsule, etc.)", "type": "info"}]
-        if live_price_error:
-            trend_notes_c.append({"text": live_price_error, "type": "danger"})
-        if empire_c:
-            gap = round((empire_c["floor"] - (w30c["avg"] if w30c else live_price or 0)) / (w30c["avg"] if w30c else live_price or 1) * 100, 1) if w30c or live_price else None
-            trend_notes_c.append({"text": f"Empire floor ${empire_c['floor']:.2f} ({empire_c['count']} listings)", "type": "info"})
-
         return {
             "item": item_name, "buy_price": buy_price, "verdict": "INFO",
-            "verdict_detail": " ".join(detail_parts) if detail_parts else f"Commodity — no float value.",
-            "verdict_eli5": "", "liquidity_eli5": "",
+            "verdict_detail": f"No float value — live {sell_label} only (no historical data)",
+            "verdict_eli5": _verdict_eli5("INFO", sell_label, live_pct, live_price),
+            "liquidity_eli5": "",
             "live_price": live_price,
             "live_price_error": live_price_error,
             "live_net": live_net,
@@ -561,14 +473,8 @@ def run_analysis(
             "sell_venue": sell_venue,
             "sell_venue_label": sell_label,
             "sell_fee_pct": round(sell_fee * 100, 2),
-            "w7": _window_result_c(w7c),
-            "w30": _window_result_c(w30c),
-            "w60": _window_result_c(w60c),
-            "w180": _window_result_c(w180c),
-            "liquidity": commodity_liq,
-            "chart": commodity_chart,
-            "empire": empire_c,
-            "trend_notes": trend_notes_c,
+            "w7": None, "w30": None, "w60": None, "w180": None, "liquidity": None, "chart": [],
+            "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
         }
 
     # For float items: normal analysis with wear condition
@@ -579,51 +485,13 @@ def run_analysis(
 
     try:
         data = get_history(search_name)
-    except Exception:
-        data = []
-
-    # If no data with wear appended, retry without it (handles vanilla knives automatically)
-    if not data and search_name != item_name:
-        try:
-            data_bare = get_history(item_name)
-            if data_bare:
-                data = data_bare
-                search_name = item_name
-        except Exception:
-            pass
-
+    except Exception as e:
+        return {"error": f"CSFloat API error: {e}"}
+    if not data:
+        return {"error": "No data from CSFloat"}
     data = sorted(data, key=lambda x: x["day"], reverse=True)
 
     parsed_sales = _fetch_parsed_sales(search_name)
-
-    # If no graph data but we have individual sales, we can still do analysis
-    if not data and not parsed_sales:
-        live_price2, live_price_error2 = _fetch_live_listed_for_venue(
-            search_name, sell_venue, float_min, float_max, live_price_override
-        )
-        empire2 = _fetch_empire_listings(search_name)
-        live_net2 = round(live_price2 * (1 - sell_fee), 2) if live_price2 else None
-        live_profit2 = round(live_net2 - buy_price, 2) if live_net2 is not None else None
-        live_pct2 = round((live_profit2 / buy_price) * 100, 1) if live_profit2 is not None else None
-        detail2 = []
-        if live_pct2 is not None:
-            detail2.append(f"Floor ${live_price2:.2f} on {sell_label} -> net ${live_net2:.2f} after {int(sell_fee*100)}% fee = {'+' if live_pct2 >= 0 else ''}{live_pct2:.1f}% vs your ${buy_price:.2f} buy.")
-        else:
-            detail2.append(f"No CSFloat listing or sales history found for this item.")
-        if empire2:
-            detail2.append(f"Empire floor ${empire2['floor']:.2f} ({empire2['count']} listings).")
-        return {
-            "item": item_name, "buy_price": buy_price, "verdict": "INFO",
-            "verdict_detail": " ".join(detail2),
-            "verdict_eli5": "", "liquidity_eli5": "",
-            "live_price": live_price2, "live_price_error": live_price_error2,
-            "live_net": live_net2, "live_profit": live_profit2, "live_pct": live_pct2,
-            "sell_venue": sell_venue, "sell_venue_label": sell_label,
-            "sell_fee_pct": round(sell_fee * 100, 2),
-            "w7": None, "w30": None, "w60": None, "w180": None,
-            "liquidity": None, "chart": [], "empire": empire2,
-            "trend_notes": [{"text": "No price graph history on CSFloat for this item", "type": "info"}],
-        }
 
     def _robust_sales_days(prices: list[float], counts: list[int]) -> list[tuple[float, int]]:
         """

@@ -31,28 +31,48 @@ def fetch_float_sales(market_hash_name: str) -> list[dict]:
 
 def fetch_float_price(market_hash_name: str, float_min: float | None = None, float_max: float | None = None) -> float | None:
     """Get current lowest CSFloat buy-now listing price, with optional float range filter."""
-    wait_if_needed("float")
     params = {
         "limit": 1,
         "sort_by": "lowest_price",
         "type": "buy_now",
+        "market_hash_name": market_hash_name,
     }
-
-    # CSFloat listings endpoint accepts market_hash_name for all item types
-    params["market_hash_name"] = market_hash_name
-
     if float_min is not None:
         params["min_float"] = float_min
     if float_max is not None:
         params["max_float"] = float_max
 
-    resp = CLIENT.get(f"{FLOAT_BASE}/listings", headers=FLOAT_HEADERS, params=params)
-    resp.raise_for_status()
-    listings = resp.json().get("data", [])
-    if not listings:
-        return None
-    p = listings[0].get("price", 0)
-    return p / 100 if isinstance(p, int) else float(p)
+    last_status = None
+    for attempt in range(3):
+        wait_if_needed("float")
+        try:
+            resp = CLIENT.get(f"{FLOAT_BASE}/listings", headers=FLOAT_HEADERS, params=params, timeout=15)
+            last_status = resp.status_code
+            if resp.status_code == 200:
+                listings = resp.json().get("data", [])
+                if not listings:
+                    return None
+                p = listings[0].get("price", 0)
+                return p / 100 if isinstance(p, int) else float(p)
+            if resp.status_code == 429:
+                time.sleep(15)
+                continue
+            if resp.status_code in (401, 403):
+                # Transient auth rejection — retry once before giving up
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                resp.raise_for_status()
+            resp.raise_for_status()
+        except Exception:
+            if attempt < 2:
+                time.sleep(1)
+                continue
+            raise
+    # All retries exhausted
+    if last_status in (401, 403):
+        raise Exception(f"{last_status} Unauthorized")
+    return None
 
 
 def extract_index(item_name: str) -> int:
