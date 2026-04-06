@@ -310,6 +310,7 @@ h1{
 .verdict-label{font-size:20px;font-weight:700;margin-bottom:3px;letter-spacing:-.3px}
 .verdict-label.BUY{color:#4a9}
 .verdict-label.SKIP{color:#c55}
+.verdict-label.INFO { background:#0d1a2a; color:#69a8d8; border-color:#1a3a5a; }
 .verdict-label.RISKY{color:#c93}
 .verdict-label.BORDERLINE{color:#777}
 .verdict-detail{font-size:13px;color:#777}
@@ -825,9 +826,9 @@ async function runAnalyze() {
 
     // Verdict
     const vb = document.getElementById('verdictBox');
-    vb.className = 'verdict-box ' + d.verdict;
+    vb.className = 'verdict-box ' + d.verdict + (d.verdict === 'INFO' ? ' info-commodity' : '');
     document.getElementById('verdictLabel').className = 'verdict-label ' + d.verdict;
-    document.getElementById('verdictLabel').textContent = d.verdict;
+    document.getElementById('verdictLabel').textContent = d.verdict === 'INFO' ? 'COMMODITY' : d.verdict;
     // Compact tag pills — CSFloat & Empire profit, pump, dips
     const vTags = document.getElementById('verdictTags');
     const vtItems = [];
@@ -913,7 +914,9 @@ async function runAnalyze() {
         windowCard('60 Days', d.w60, price, cfPrice, 'CSFloat') +
         windowCard('6 Months', d.w180, price, cfPrice, 'CSFloat');
       cf.style.display = 'block';
-      cf.textContent = 'CSFloat historical sales — all net values already have the 2% fee deducted. Empire has 0% fee so its floor = net.';
+      cf.textContent = d.verdict === 'INFO'
+        ? 'Price history for this commodity. No float values — all prices are raw market listings.'
+        : 'CSFloat historical sales — all net values already have the 2% fee deducted. Empire has 0% fee so its floor = net.';
     } else {
       document.getElementById('windowCards').innerHTML = '';
       cf.style.display = 'none';

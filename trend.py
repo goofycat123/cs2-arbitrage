@@ -38,15 +38,8 @@ def fetch_float_price(market_hash_name: str, float_min: float | None = None, flo
         "type": "buy_now",
     }
 
-    # Detect special item types
-    if "Music Kit" in market_hash_name:
-        params["music_kit_index"] = extract_index(market_hash_name)
-    elif "Sticker" in market_hash_name:
-        params["sticker_index"] = extract_index(market_hash_name)
-    elif "Case" in market_hash_name or "Capsule" in market_hash_name:
-        params["container_index"] = extract_index(market_hash_name)
-    else:
-        params["market_hash_name"] = market_hash_name
+    # CSFloat listings endpoint accepts market_hash_name for all item types
+    params["market_hash_name"] = market_hash_name
 
     if float_min is not None:
         params["min_float"] = float_min

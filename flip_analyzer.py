@@ -68,42 +68,12 @@ def get_history(item_name):
         match = re.search(r'\((\d+)\)', name)
         return int(match.group(1)) if match else None
 
-    if "Music Kit" in item_name:
-        idx = extract_idx(item_name)
-        if idx:
-            resp = httpx.get(
-                f"https://csfloat.com/api/v1/history/music_kit/{idx}/graph",
-                headers=FLOAT_HEADERS,
-                timeout=15,
-            )
-        else:
-            return []
-    elif "Sticker" in item_name:
-        idx = extract_idx(item_name)
-        if idx:
-            resp = httpx.get(
-                f"https://csfloat.com/api/v1/history/sticker/{idx}/graph",
-                headers=FLOAT_HEADERS,
-                timeout=15,
-            )
-        else:
-            return []
-    elif "Case" in item_name or "Capsule" in item_name:
-        idx = extract_idx(item_name)
-        if idx:
-            resp = httpx.get(
-                f"https://csfloat.com/api/v1/history/container/{idx}/graph",
-                headers=FLOAT_HEADERS,
-                timeout=15,
-            )
-        else:
-            return []
-    else:
-        resp = httpx.get(
-            f"https://csfloat.com/api/v1/history/{quote(item_name)}/graph",
-            headers=FLOAT_HEADERS,
-            timeout=15,
-        )
+    # Generic graph endpoint works for all item types including cases, stickers, capsules
+    resp = httpx.get(
+        f"https://csfloat.com/api/v1/history/{quote(item_name)}/graph",
+        headers=FLOAT_HEADERS,
+        timeout=15,
+    )
 
     resp.raise_for_status()
     data = resp.json()

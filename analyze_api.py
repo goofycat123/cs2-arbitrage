@@ -440,22 +440,107 @@ def run_analysis(
             float_min = round(max(0.0, (100 - fade_max_pct) * mwf / 10), 4)
 
     # Detect if item has float values (charms, stickers, vanilla knives don't)
-    no_float_keywords = ["Charm", "Sticker", "Vanilla", "Skeleton Key", "Agent", "Patch", "Collectible"]
+    no_float_keywords = ["Charm", "Sticker", "Vanilla", "Skeleton Key", "Agent", "Patch", "Collectible",
+                         "Case", "Capsule", "Package", "Souvenir", "Graffiti", "Pin", "Coin",
+                         "Music Kit", "Tool"]
     has_float = not any(keyword in item_name for keyword in no_float_keywords)
 
     if not has_float:
-        # No-float items: return live price only, no history
+        # Commodity items (cases, stickers, capsules, etc.) — no float, but full price history
         live_price, live_price_error = _fetch_live_listed_for_venue(
             item_name, sell_venue, None, None, live_price_override
         )
         live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
         live_profit = round(live_net - buy_price, 2) if live_net is not None else None
         live_pct = round((live_profit / buy_price) * 100, 1) if live_profit is not None else None
+
+        # Fetch price history (graph + individual sales)
+        commodity_chart = []
+        w7c = w30c = w60c = w180c = None
+        commodity_liq = None
+        empire_c = _fetch_empire_listings(item_name)
+        try:
+            cdata = get_history(item_name)
+            if cdata:
+                cdata = sorted(cdata, key=lambda x: x["day"], reverse=True)
+                parsed_c = _fetch_parsed_sales(item_name)
+
+                def wstats_c(days):
+                    raw = _window_stats_from_raw_sales(parsed_c, days)
+                    if raw:
+                        return raw
+                    s = cdata[:days]
+                    if not s:
+                        return None
+                    prices = [d["avg_price"] / 100 for d in s]
+                    counts = [d["count"] for d in s]
+                    import statistics as _st
+                    avg = sum(p * c for p, c in zip(prices, counts)) / max(sum(counts), 1)
+                    return {
+                        "avg": round(avg, 2),
+                        "median": round(avg, 2),
+                        "low": round(min(prices), 2),
+                        "high": round(max(prices), 2),
+                        "sales": sum(counts),
+                        "days": len(s),
+                        "basis": "graph",
+                    }
+
+                w7c = wstats_c(7)
+                w30c = wstats_c(30)
+                w60c = wstats_c(60)
+                w180c = wstats_c(180)
+                commodity_liq = liquidity_score(w7c, w30c, w60c)
+                commodity_chart = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]}
+                                    for d in cdata[:400]]
+        except Exception:
+            pass
+
+        def _window_result_c(w):
+            if not w:
+                return None
+            net_s = w["avg"] * (1 - sell_fee)
+            profit = net_s - buy_price
+            pct = (profit / buy_price) * 100
+            buffer = ((w["low"] - buy_price) / buy_price) * 100
+            return {**w, "net_sell": round(net_s, 2), "profit": round(profit, 2), "pct": round(pct, 1), "buffer": round(buffer, 1)}
+
+        # Verdict detail for commodities
+        detail_parts = []
+        if live_pct is not None:
+            sign = "+" if live_pct >= 0 else ""
+            detail_parts.append(
+                f"Floor ${live_price:.2f} on {sell_label} -> net ${live_net:.2f} after {int(sell_fee*100)}% fee = {sign}{live_pct:.1f}% vs your ${buy_price:.2f} buy."
+            )
+        elif w30c:
+            w30n = round(w30c["avg"] * (1 - sell_fee), 2)
+            w30p = round((w30n - buy_price) / buy_price * 100, 1)
+            detail_parts.append(
+                f"No live floor right now. 30d avg ${w30c['avg']:.2f} -> net ${w30n:.2f} after fee = {'+' if w30p >= 0 else ''}{w30p:.1f}% vs ${buy_price:.2f} buy."
+            )
+        else:
+            detail_parts.append(f"No price data available on {sell_label}.")
+        if w30c:
+            pump_c = round(((w7c["avg"] / w30c["avg"]) - 1) * 100, 1) if w7c and w30c else 0
+            if abs(pump_c) > 10:
+                detail_parts.append(f"Price {'up' if pump_c > 0 else 'down'} {abs(pump_c):.0f}% vs 30d avg — {'possible pump' if pump_c > 0 else 'declining'}.")
+            elif commodity_liq and isinstance(commodity_liq, dict):
+                g = commodity_liq.get("grade", "?")
+                spd = commodity_liq.get("spd_7", 0)
+                liq_txt = {"A": "sells daily", "B": "1-3 day wait", "C": "up to a week", "D": "slow mover", "F": "illiquid"}.get(g, "")
+                detail_parts.append(f"Liquidity {g} ({spd}/day — {liq_txt}).")
+
+        trend_notes_c = [{"text": "Commodity — no float value (case, sticker, capsule, etc.)", "type": "info"}]
+        if live_price_error:
+            trend_notes_c.append({"text": live_price_error, "type": "danger"})
+        if empire_c:
+            gap = round((empire_c["floor"] - (w30c["avg"] if w30c else live_price or 0)) / (w30c["avg"] if w30c else live_price or 1) * 100, 1) if w30c or live_price else None
+            trend_notes_c.append({"text": f"Empire floor ${empire_c['floor']:.2f} ({empire_c['count']} listings)", "type": "info"})
+
         return {
             "item": item_name, "buy_price": buy_price, "verdict": "INFO",
-            "verdict_detail": f"No float value — live {sell_label} only (no historical data)",
-            "verdict_eli5": _verdict_eli5("INFO", sell_label, live_pct, live_price),
-            "liquidity_eli5": "",
+            "verdict_detail": " ".join(detail_parts) if detail_parts else f"Commodity — no float value.",
+            "verdict_eli5": "", "liquidity_eli5": "",
             "live_price": live_price,
             "live_price_error": live_price_error,
             "live_net": live_net,
@@ -464,8 +549,14 @@ def run_analysis(
             "sell_venue": sell_venue,
             "sell_venue_label": sell_label,
             "sell_fee_pct": round(sell_fee * 100, 2),
-            "w7": None, "w30": None, "w60": None, "w180": None, "liquidity": None, "chart": [],
-            "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
+            "w7": _window_result_c(w7c),
+            "w30": _window_result_c(w30c),
+            "w60": _window_result_c(w60c),
+            "w180": _window_result_c(w180c),
+            "liquidity": commodity_liq,
+            "chart": commodity_chart,
+            "empire": empire_c,
+            "trend_notes": trend_notes_c,
         }
 
     # For float items: normal analysis with wear condition
