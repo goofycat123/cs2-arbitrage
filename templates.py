@@ -810,7 +810,7 @@ async function runAnalyze() {
     const resp = await fetch('/api/analyze', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
-        item, price, wear: currentWear,
+        item, price, wear: vanillaMode ? 'FN' : currentWear, vanilla: vanillaMode,
         float_min: parseFloat(document.getElementById('floatMin').value) || null,
         float_max: parseFloat(document.getElementById('floatMax').value) || null,
         fade_min_pct: fade_min,
@@ -1330,6 +1330,28 @@ function switchWear(wear) {
   document.getElementById('itemName').value = itemName;
 
   runAnalyze();
+}
+
+let vanillaMode = false;
+function toggleVanilla() {
+  vanillaMode = !vanillaMode;
+  const btn = document.getElementById('vanillaBtn');
+  btn.classList.toggle('active', vanillaMode);
+  btn.style.background = vanillaMode ? '#2a1a3f' : '';
+  // Disable wear buttons when vanilla mode is active
+  document.querySelectorAll('.wear-btn:not(#vanillaBtn)').forEach(b => {
+    b.style.opacity = vanillaMode ? '0.35' : '';
+    b.style.pointerEvents = vanillaMode ? 'none' : '';
+  });
+  // Strip wear from item name if switching to vanilla
+  if (vanillaMode) {
+    let v = document.getElementById('itemName').value.trim();
+    ['Factory New','Minimal Wear','Field-Tested','Well-Worn','Battle-Scarred'].forEach(w => {
+      v = v.replace('(' + w + ')', '').replace(w, '').trim();
+    });
+    v = v.replace(/\(\s*\)/g, '').trim();
+    document.getElementById('itemName').value = v;
+  }
 }
 
 function pickItem(name, price) {

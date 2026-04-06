@@ -99,11 +99,16 @@ def analyze_item(body: dict):
     fade_min_pct = body.get("fade_min_pct")
     fade_max_pct = body.get("fade_max_pct")
     live_price_override = body.get("live_price_override")
+    vanilla = bool(body.get("vanilla", False))
     sell_venue = body.get("sell_venue") or "csfloat"
     if not item_name or buy_price <= 0:
         return {"error": "Need item name and buy price"}
     if live_price_override is not None:
         live_price_override = float(live_price_override)
+    # Vanilla knives: strip wear condition from name if present
+    if vanilla:
+        for w in ["(Factory New)", "(Minimal Wear)", "(Field-Tested)", "(Well-Worn)", "(Battle-Scarred)"]:
+            item_name = item_name.replace(w, "").strip()
     return run_analysis(
         item_name,
         buy_price,

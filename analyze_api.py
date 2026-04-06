@@ -560,7 +560,9 @@ def run_analysis(
         }
 
     # For float items: normal analysis with wear condition
-    if any(w in item_name for w in wear_map.values()):
+    # Vanilla knives (e.g. "★ Paracord Knife") have no skin/wear in the name — don't append it
+    is_vanilla_knife = "★" in item_name and " | " not in item_name
+    if any(w in item_name for w in wear_map.values()) or is_vanilla_knife:
         search_name = item_name
     else:
         search_name = f"{item_name} ({wear_name})"
