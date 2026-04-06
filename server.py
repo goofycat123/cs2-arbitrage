@@ -68,8 +68,14 @@ def search_items(q: str = ""):
     from rate_limiter import wait_if_needed
 
     results = []
+    seen: set[str] = set()
 
-    # 1. Pricempire (skins, cases, stickers)
+    def add(name: str):
+        if name and name not in seen:
+            seen.add(name)
+            results.append({"name": name, "price": 0})
+
+    # 1. Pricempire
     if PRICEMPIRE_API_KEY:
         try:
             wait_if_needed("pricempire_free")
@@ -79,33 +85,28 @@ def search_items(q: str = ""):
                 timeout=8,
             )
             if resp.status_code == 200:
-                for r in resp.json().get("results", [])[:15]:
-                    name = r.get("market_hash_name", "")
-                    if name:
-                        results.append({"name": name, "price": 0})
+                for r in resp.json().get("results", [])[:10]:
+                    add(r.get("market_hash_name", ""))
         except Exception:
             pass
 
-    # 2. Steam Market fallback — covers agents, music kits, rare items Pricempire misses
-    if len(results) < 5:
-        try:
-            steam = httpx.get(
-                "https://steamcommunity.com/market/search/render/",
-                params={"appid": 730, "query": q, "search_descriptions": 0, "count": 10, "norender": 1},
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            if steam.status_code == 200:
-                existing = {r["name"] for r in results}
-                for item in steam.json().get("results", []):
-                    name = item.get("hash_name", "")
-                    if name and name not in existing:
-                        results.append({"name": name, "price": 0})
-                        existing.add(name)
-                        if len(results) >= 15:
-                            break
-        except Exception:
-            pass
+    # 2. Steam Market — always run, covers agents/stickers/music kits Pricempire misses
+    try:
+        steam = httpx.get(
+            "https://steamcommunity.com/market/search/render/",
+            params={"appid": 730, "query": q, "search_descriptions": 0, "count": 15, "norender": 1},
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+            },
+        )
+        if steam.status_code == 200:
+            for item in steam.json().get("results", []):
+                add(item.get("hash_name", ""))
+    except Exception:
+        pass
 
     return {"results": results[:15]}
 
