@@ -846,6 +846,7 @@ async function runAnalyze() {
 
     // CSFloat card
     const cfPrice = d.live_price;
+    const cfErr = d.live_price_error || null;
     const cfNetVal = cfPrice != null ? +(cfPrice * 0.98).toFixed(2) : null;
     const cfPft = cfNetVal != null ? +(cfNetVal - price).toFixed(2) : null;
     const cfPct2 = cfPft != null ? +((cfPft / price) * 100).toFixed(1) : null;
@@ -855,6 +856,8 @@ async function runAnalyze() {
     if (cfPct2 != null) {
       cfPEl.textContent = (cfPft >= 0 ? '+$' : '$') + cfPft.toFixed(2) + ' (' + (cfPct2 > 0 ? '+' : '') + cfPct2 + '%)';
       cfPEl.style.color = cfPct2 >= 2 ? '#33ee77' : cfPct2 >= 0 ? '#c93' : '#c55';
+    } else if (cfErr) {
+      cfPEl.textContent = cfErr; cfPEl.style.color = '#c55'; cfPEl.style.fontSize = '11px';
     } else {
       cfPEl.textContent = 'No listing'; cfPEl.style.color = '#444';
     }

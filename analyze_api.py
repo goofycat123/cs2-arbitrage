@@ -112,18 +112,31 @@ def _fetch_live_listed_for_venue(
     float_min,
     float_max,
     live_price_override: float | None,
-) -> float | None:
-    """Gross listed/floor price before that marketplace’s sell fee."""
+) -> tuple[float | None, str | None]:
+    """Returns (gross_listed_price, error_reason). Price is before marketplace sell fee."""
     if live_price_override is not None:
-        return live_price_override
+        return live_price_override, None
     v = (venue or "csfloat").lower()
     if v == "empire":
         emp = _fetch_empire_listings(search_name)
-        return float(emp["floor"]) if emp else None
+        return (float(emp["floor"]), None) if emp else (None, "No Empire listings found")
+    from config import FLOAT_API_KEY
+    if not FLOAT_API_KEY:
+        return None, "FLOAT_API_KEY not configured - set it in Railway Variables"
     try:
-        return fetch_float_price(search_name, float_min=float_min, float_max=float_max)
-    except Exception:
-        return None
+        price = fetch_float_price(search_name, float_min=float_min, float_max=float_max)
+        if price is None:
+            return None, "No CSFloat buy-now listings for this item/float range"
+        return price, None
+    except Exception as e:
+        err = str(e)
+        if "429" in err or "too many" in err.lower():
+            return None, "CSFloat rate limited (429) - wait 60s and retry"
+        if "401" in err or "403" in err or "unauthorized" in err.lower():
+            return None, "CSFloat API key invalid or expired (401/403)"
+        if "timeout" in err.lower():
+            return None, "CSFloat API timed out"
+        return None, f"CSFloat error: {err[:120]}"
 
 
 def _fetch_empire_listings(item_name: str) -> dict | None:
@@ -432,7 +445,7 @@ def run_analysis(
 
     if not has_float:
         # No-float items: return live price only, no history
-        live_price = _fetch_live_listed_for_venue(
+        live_price, live_price_error = _fetch_live_listed_for_venue(
             item_name, sell_venue, None, None, live_price_override
         )
         live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
@@ -444,6 +457,7 @@ def run_analysis(
             "verdict_eli5": _verdict_eli5("INFO", sell_label, live_pct, live_price),
             "liquidity_eli5": "",
             "live_price": live_price,
+            "live_price_error": live_price_error,
             "live_net": live_net,
             "live_profit": live_profit,
             "live_pct": live_pct,
@@ -562,7 +576,7 @@ def run_analysis(
         return {**w, "net_sell": round(net_sell, 2), "profit": round(profit, 2), "pct": round(pct, 1), "buffer": round(buffer, 1)}
 
     # Live sell-side quote (listed/floor before that site’s fee)
-    live_price = _fetch_live_listed_for_venue(
+    live_price, live_price_error = _fetch_live_listed_for_venue(
         search_name, sell_venue, float_min, float_max, live_price_override
     )
     live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
@@ -826,7 +840,7 @@ def run_analysis(
 
     return {
         "item": item_name, "buy_price": buy_price,
-        "live_price": live_price, "live_net": live_net, "live_profit": live_profit, "live_pct": live_pct,
+        "live_price": live_price, "live_price_error": live_price_error, "live_net": live_net, "live_profit": live_profit, "live_pct": live_pct,
         "sell_venue": sell_venue,
         "sell_venue_label": sell_label,
         "sell_fee_pct": round(sell_fee * 100, 2),

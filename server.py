@@ -27,6 +27,38 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/test-csfloat")
+def test_csfloat():
+    """Quick probe: verify CSFloat API key works and can fetch a live listing."""
+    from config import FLOAT_API_KEY
+    from rate_limiter import wait_if_needed
+    if not FLOAT_API_KEY:
+        return {"ok": False, "error": "FLOAT_API_KEY env var not set — add it in Railway Variables"}
+    try:
+        wait_if_needed("float")
+        resp = httpx.get(
+            "https://csfloat.com/api/v1/listings",
+            headers={"Authorization": FLOAT_API_KEY},
+            params={"market_hash_name": "AK-47 | Redline (Field-Tested)", "limit": 1, "sort_by": "lowest_price", "type": "buy_now"},
+            timeout=12,
+        )
+        if resp.status_code == 401:
+            return {"ok": False, "error": "API key rejected (401 Unauthorized) — key may be expired or invalid"}
+        if resp.status_code == 403:
+            return {"ok": False, "error": "API key forbidden (403) — check CSFloat API key permissions"}
+        if resp.status_code == 429:
+            return {"ok": False, "error": "Rate limited (429) — too many requests, wait 60s"}
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"CSFloat returned HTTP {resp.status_code}", "body": resp.text[:200]}
+        data = resp.json().get("data", [])
+        if data:
+            price = data[0].get("price", 0)
+            return {"ok": True, "floor_price": round(price / 100, 2), "key_prefix": FLOAT_API_KEY[:6] + "..."}
+        return {"ok": True, "floor_price": None, "note": "No listings found for test item (key works)", "key_prefix": FLOAT_API_KEY[:6] + "..."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/api/search")
 def search_items(q: str = ""):
     if len(q) < 2:
