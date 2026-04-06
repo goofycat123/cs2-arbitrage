@@ -560,17 +560,26 @@ def run_analysis(
         }
 
     # For float items: normal analysis with wear condition
-    # Vanilla knives (e.g. "★ Paracord Knife") have no skin/wear in the name — don't append it
-    is_vanilla_knife = "★" in item_name and " | " not in item_name
-    if any(w in item_name for w in wear_map.values()) or is_vanilla_knife:
+    if any(w in item_name for w in wear_map.values()):
         search_name = item_name
     else:
         search_name = f"{item_name} ({wear_name})"
 
     try:
         data = get_history(search_name)
-    except Exception as e:
+    except Exception:
         data = []
+
+    # If no data with wear appended, retry without it (handles vanilla knives automatically)
+    if not data and search_name != item_name:
+        try:
+            data_bare = get_history(item_name)
+            if data_bare:
+                data = data_bare
+                search_name = item_name
+        except Exception:
+            pass
+
     data = sorted(data, key=lambda x: x["day"], reverse=True)
 
     parsed_sales = _fetch_parsed_sales(search_name)
