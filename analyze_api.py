@@ -568,12 +568,39 @@ def run_analysis(
     try:
         data = get_history(search_name)
     except Exception as e:
-        return {"error": f"CSFloat API error: {e}"}
-    if not data:
-        return {"error": "No data from CSFloat"}
+        data = []
     data = sorted(data, key=lambda x: x["day"], reverse=True)
 
     parsed_sales = _fetch_parsed_sales(search_name)
+
+    # If no graph data but we have individual sales, we can still do analysis
+    if not data and not parsed_sales:
+        live_price2, live_price_error2 = _fetch_live_listed_for_venue(
+            search_name, sell_venue, float_min, float_max, live_price_override
+        )
+        empire2 = _fetch_empire_listings(search_name)
+        live_net2 = round(live_price2 * (1 - sell_fee), 2) if live_price2 else None
+        live_profit2 = round(live_net2 - buy_price, 2) if live_net2 is not None else None
+        live_pct2 = round((live_profit2 / buy_price) * 100, 1) if live_profit2 is not None else None
+        detail2 = []
+        if live_pct2 is not None:
+            detail2.append(f"Floor ${live_price2:.2f} on {sell_label} -> net ${live_net2:.2f} after {int(sell_fee*100)}% fee = {'+' if live_pct2 >= 0 else ''}{live_pct2:.1f}% vs your ${buy_price:.2f} buy.")
+        else:
+            detail2.append(f"No CSFloat listing or sales history found for this item.")
+        if empire2:
+            detail2.append(f"Empire floor ${empire2['floor']:.2f} ({empire2['count']} listings).")
+        return {
+            "item": item_name, "buy_price": buy_price, "verdict": "INFO",
+            "verdict_detail": " ".join(detail2),
+            "verdict_eli5": "", "liquidity_eli5": "",
+            "live_price": live_price2, "live_price_error": live_price_error2,
+            "live_net": live_net2, "live_profit": live_profit2, "live_pct": live_pct2,
+            "sell_venue": sell_venue, "sell_venue_label": sell_label,
+            "sell_fee_pct": round(sell_fee * 100, 2),
+            "w7": None, "w30": None, "w60": None, "w180": None,
+            "liquidity": None, "chart": [], "empire": empire2,
+            "trend_notes": [{"text": "No price graph history on CSFloat for this item", "type": "info"}],
+        }
 
     def _robust_sales_days(prices: list[float], counts: list[int]) -> list[tuple[float, int]]:
         """
