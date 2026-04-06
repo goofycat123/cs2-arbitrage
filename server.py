@@ -67,26 +67,47 @@ def search_items(q: str = ""):
     from config import PRICEMPIRE_API_KEY
     from rate_limiter import wait_if_needed
 
-    if not PRICEMPIRE_API_KEY:
-        return {"results": []}
+    results = []
 
-    try:
-        wait_if_needed("pricempire_free")
-        resp = httpx.get(
-            "https://api.pricempire.com/v4/free/search",
-            params={"q": q, "api_key": PRICEMPIRE_API_KEY},
-            timeout=10
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            results = data.get("results", [])
-            # Convert to our format - Pricempire uses market_hash_name
-            matches = [{"name": r.get("market_hash_name", ""), "price": 0} for r in results[:15] if r.get("market_hash_name")]
-            return {"results": matches}
-    except Exception as e:
-        pass
+    # 1. Pricempire (skins, cases, stickers)
+    if PRICEMPIRE_API_KEY:
+        try:
+            wait_if_needed("pricempire_free")
+            resp = httpx.get(
+                "https://api.pricempire.com/v4/free/search",
+                params={"q": q, "api_key": PRICEMPIRE_API_KEY},
+                timeout=8,
+            )
+            if resp.status_code == 200:
+                for r in resp.json().get("results", [])[:15]:
+                    name = r.get("market_hash_name", "")
+                    if name:
+                        results.append({"name": name, "price": 0})
+        except Exception:
+            pass
 
-    return {"results": []}
+    # 2. Steam Market fallback — covers agents, music kits, rare items Pricempire misses
+    if len(results) < 5:
+        try:
+            steam = httpx.get(
+                "https://steamcommunity.com/market/search/render/",
+                params={"appid": 730, "query": q, "search_descriptions": 0, "count": 10, "norender": 1},
+                timeout=8,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            if steam.status_code == 200:
+                existing = {r["name"] for r in results}
+                for item in steam.json().get("results", []):
+                    name = item.get("hash_name", "")
+                    if name and name not in existing:
+                        results.append({"name": name, "price": 0})
+                        existing.add(name)
+                        if len(results) >= 15:
+                            break
+        except Exception:
+            pass
+
+    return {"results": results[:15]}
 
 
 @app.post("/api/analyze")
