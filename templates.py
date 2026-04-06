@@ -1260,6 +1260,8 @@ function isCommodity(name) {
   if (_NO_FLOAT_KW.some(k => name.includes(k))) return true;
   // Agent: has " | " but base name is not a weapon
   if (name.includes(' | ') && !_WEAPON_PREFIXES.some(p => name.startsWith(p))) return true;
+  // Vanilla knife: starts with ★ but has no skin (no " | ")
+  if ((name.startsWith('★') || name.startsWith('*')) && !name.includes(' | ')) return true;
   return false;
 }
 

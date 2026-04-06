@@ -477,21 +477,56 @@ def run_analysis(
             "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
         }
 
-    # For float items: normal analysis with wear condition
+    # For float items: build search name with wear condition
     if any(w in item_name for w in wear_map.values()):
         search_name = item_name
     else:
         search_name = f"{item_name} ({wear_name})"
 
+    # Fetch price graph — retry without wear if first attempt empty (handles vanilla knives)
     try:
         data = get_history(search_name)
-    except Exception as e:
-        return {"error": f"CSFloat API error: {e}"}
-    if not data:
-        return {"error": "No data from CSFloat"}
+    except Exception:
+        data = []
+    if not data and search_name != item_name:
+        try:
+            data_bare = get_history(item_name)
+            if data_bare:
+                data = data_bare
+                search_name = item_name
+        except Exception:
+            pass
     data = sorted(data, key=lambda x: x["day"], reverse=True)
 
     parsed_sales = _fetch_parsed_sales(search_name)
+
+    # No graph + no sales: show live price only (vanilla knives, agents, low-volume items)
+    if not data and not parsed_sales:
+        _lp, _lpe = _fetch_live_listed_for_venue(search_name, sell_venue, float_min, float_max, live_price_override)
+        _emp = _fetch_empire_listings(search_name)
+        _ln = round(_lp * (1 - sell_fee), 2) if _lp else None
+        _lpft = round(_ln - buy_price, 2) if _ln is not None else None
+        _lpct = round((_lpft / buy_price) * 100, 1) if _lpft is not None else None
+        _d = []
+        if _lpct is not None:
+            _d.append(f"Floor ${_lp:.2f} on {sell_label} -> net ${_ln:.2f} after {int(sell_fee*100)}% fee = {'+' if _lpct>=0 else ''}{_lpct:.1f}% vs your ${buy_price:.2f} buy.")
+        else:
+            _d.append(f"No CSFloat listing found for this item right now.")
+        if _lpe:
+            _d.append(_lpe)
+        if _emp:
+            _d.append(f"Empire floor ${_emp['floor']:.2f} ({_emp['count']} listings).")
+        return {
+            "item": item_name, "buy_price": buy_price, "verdict": "INFO",
+            "verdict_detail": " ".join(_d), "verdict_eli5": "", "liquidity_eli5": "",
+            "live_price": _lp, "live_price_error": _lpe,
+            "live_net": _ln, "live_profit": _lpft, "live_pct": _lpct,
+            "sell_venue": sell_venue, "sell_venue_label": sell_label,
+            "sell_fee_pct": round(sell_fee * 100, 2),
+            "w7": None, "w30": None, "w60": None, "w180": None,
+            "liquidity": None, "chart": [], "empire": _emp,
+            "trend_notes": [{"text": "No price graph history on CSFloat for this item", "type": "info"}],
+        }
 
     def _robust_sales_days(prices: list[float], counts: list[int]) -> list[tuple[float, int]]:
         """
