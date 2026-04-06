@@ -522,7 +522,7 @@ h1{
   <div id="tab-analyzer" class="tab-panel active">
 
   <div style="position:relative;margin-bottom:10px">
-    <input type="text" id="itemName" placeholder="Start typing item name..." autocomplete="off" oninput="onSearch(this.value)" style="width:100%;box-sizing:border-box;font-size:14px;padding:11px 14px;border-radius:6px;border:1px solid #252525;background:#181818;color:#ccc;outline:none">
+    <input type="text" id="itemName" placeholder="Start typing item name..." autocomplete="off" oninput="onSearch(this.value); updateCommodityUI(this.value)" style="width:100%;box-sizing:border-box;font-size:14px;padding:11px 14px;border-radius:6px;border:1px solid #252525;background:#181818;color:#ccc;outline:none">
     <div id="suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#181818;border:1px solid #282828;border-radius:0 0 6px 6px;max-height:280px;overflow-y:auto;z-index:100"></div>
   </div>
   <div id="wearTabs" class="wear-tabs">
@@ -1252,10 +1252,32 @@ function onSearch(q) {
     } catch(e) {}
   }, 400);
 }
+
+const _WEAPON_PREFIXES = ["AK-47", "M4A4", "M4A1", "AWP", "USP", "Glock", "P250", "Desert Eagle", "MP9", "MAC-10", "P90", "MP5", "UMP-45", "PP-Bizon", "MP7", "XM1014", "Nova", "Sawed-Off", "MAG-7", "Negev", "M249", "SSG 08", "SCAR-20", "G3SG1", "SG 553", "AUG", "FAMAS", "Galil", "Dual Berettas", "Five-SeveN", "Tec-9", "CZ75", "R8 Revolver", "Zeus", "★"];
+const _NO_FLOAT_KW = ['Charm','Sticker','Case','Capsule','Package','Souvenir','Graffiti','Pin','Coin','Music Kit','Tool','Patch'];
+
+function isCommodity(name) {
+  if (_NO_FLOAT_KW.some(k => name.includes(k))) return true;
+  // Agent: has " | " but base name is not a weapon
+  if (name.includes(' | ') && !_WEAPON_PREFIXES.some(p => name.startsWith(p))) return true;
+  return false;
+}
+
+function updateCommodityUI(name) {
+  const commodity = isCommodity(name);
+  document.getElementById('wearTabs').style.display = commodity ? 'none' : '';
+  const floatInputs = document.querySelectorAll('#floatMin, #floatMax');
+  floatInputs.forEach(el => {
+    el.style.display = commodity ? 'none' : '';
+    if (commodity) el.value = '';
+  });
+}
+
 function pickItem(name, price) {
   document.getElementById('itemName').value = name;
   document.getElementById('buyPrice').value = price.toFixed(2);
   document.getElementById('suggestions').style.display = 'none';
+  updateCommodityUI(name);
 }
 document.addEventListener('click', e => {
   if (!e.target.closest('.input-row')) document.getElementById('suggestions').style.display = 'none';

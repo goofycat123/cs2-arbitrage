@@ -439,11 +439,23 @@ def run_analysis(
         if fade_max_pct is not None:
             float_min = round(max(0.0, (100 - fade_max_pct) * mwf / 10), 4)
 
-    # Detect if item has float values (charms, stickers, vanilla knives don't)
-    no_float_keywords = ["Charm", "Sticker", "Vanilla", "Skeleton Key", "Agent", "Patch", "Collectible",
-                         "Case", "Capsule", "Package", "Souvenir", "Graffiti", "Pin", "Coin",
-                         "Music Kit", "Tool"]
-    has_float = not any(keyword in item_name for keyword in no_float_keywords)
+    # Weapon prefixes — anything with | but NOT starting with one of these is an agent/character
+    _WEAPON_PREFIXES = (
+        "AK-47","M4A4","M4A1","AWP","USP","Glock","P250","Desert Eagle","MP9","MAC-10",
+        "P90","MP5","UMP-45","PP-Bizon","MP7","XM1014","Nova","Sawed-Off","MAG-7","Negev",
+        "M249","SSG 08","SCAR-20","G3SG1","SG 553","AUG","FAMAS","Galil","Dual Berettas",
+        "Five-SeveN","Tec-9","CZ75","R8 Revolver","Zeus","★",
+    )
+    _NO_FLOAT_KW = (
+        "Charm","Sticker","Vanilla","Skeleton Key","Patch","Collectible",
+        "Case","Capsule","Package","Souvenir","Graffiti","Pin","Coin","Music Kit","Tool",
+    )
+    # Agents: have " | " but base name is not a weapon
+    _is_agent = (
+        " | " in item_name
+        and not any(item_name.startswith(p) for p in _WEAPON_PREFIXES)
+    )
+    has_float = not (any(kw in item_name for kw in _NO_FLOAT_KW) or _is_agent)
 
     if not has_float:
         # Commodity items (cases, stickers, capsules, etc.) — no float, but full price history
