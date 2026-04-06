@@ -838,7 +838,7 @@ async function runAnalyze() {
     if (d.dips_7d!=null) { const c=d.dips_7d>0?'#c93':'#4a9'; vtItems.push('<span style="font-size:11px;padding:2px 8px;border-radius:3px;background:#181818;border:1px solid #2a2a2a;color:'+c+'">Dips 7d: '+d.dips_7d+'&times;</span>'); }
     vTags.innerHTML = vtItems.join('');
     // 2-sentence detail only
-    const vDetail = (d.verdict_detail||'').split(/\. (?=[A-Z])/g).slice(0,2).join('. ').replace(/\.?\s*$/,'')+'.';
+    const vDetail = (d.verdict_detail||'').split(/\. (?=[A-Z])/g).slice(0,3).join('. ').replace(/\.?\s*$/,'')+'.'  // show up to 3 sentences;
     document.getElementById('verdictDetail').textContent = vDetail;
 
     // Market cards

@@ -677,79 +677,77 @@ def run_analysis(
     else:
         verdict = "SKIP"
 
-    # --- Narrative verdict_detail (sell site first; CSFloat history = reference only) ---
+    # --- Narrative verdict_detail: lead with numbers, then one key signal ---
     lines = []
     fee_pct_disp = int(sell_fee * 100) if sell_fee * 100 == int(sell_fee * 100) else round(sell_fee * 100, 2)
 
-    lines.append(f"Your plan: sell on {sell_label}. Verdict blends that live quote (~55%) with CSFloat sale history (~45%).")
+    # Sentence 1: live floor → net → profit vs buy
     if live_pct is not None:
         if live_pct < 0:
             lines.append(
-                f"{sell_label} now: listed ${live_price:.0f} → after {fee_pct_disp}% fee net ${live_net:.0f} vs your ${buy_price:.0f} buy ({live_pct:+.1f}%)."
+                f"Floor ${live_price:.2f} on {sell_label} → net ${live_net:.2f} after {fee_pct_disp}% fee = {live_pct:+.1f}% vs your ${buy_price:.2f} buy — underwater right now."
             )
         elif live_pct < 2:
             lines.append(
-                f"{sell_label} now: listed ${live_price:.0f} → after {fee_pct_disp}% fee only {live_pct:+.1f}% headroom vs buy."
+                f"Floor ${live_price:.2f} on {sell_label} → net ${live_net:.2f} after {fee_pct_disp}% fee = {live_pct:+.1f}% vs your ${buy_price:.2f} buy — barely any margin."
             )
         else:
             lines.append(
-                f"{sell_label} now: listed ${live_price:.0f} → net ${live_net:.0f} after fee ({live_pct:+.1f}% vs buy)."
+                f"Floor ${live_price:.2f} on {sell_label} → net ${live_net:.2f} after {fee_pct_disp}% fee = {live_pct:+.1f}% vs your ${buy_price:.2f} buy."
             )
+    elif w30:
+        w30_net = round(w30["avg"] * (1 - CSFLOAT_FEE), 2)
+        w30_pct_r2 = round((w30_net - buy_price) / buy_price * 100, 1)
+        lines.append(
+            f"No live floor on {sell_label} right now. 30d avg ${w30['avg']:.2f} → net ${w30_net:.2f} after fee = {w30_pct_r2:+.1f}% vs your ${buy_price:.2f} buy."
+        )
     else:
-        lines.append(f"No live {sell_label} listing right now — keys, stock, or API; CSFloat history below is your best hint.")
+        lines.append(f"No live or historical price data available for this item on {sell_label}.")
 
-    if w30:
-        w30_pct_r = round((w30["avg"] * (1 - CSFLOAT_FEE) - buy_price) / buy_price * 100, 1)
-        if w30_pct_r >= 5:
-            lines.append(f"CSFloat history (reference): 30d typical ~${w30['avg']:.0f} → +{w30_pct_r}% vs buy after 2% fee.")
-        elif w30_pct_r >= 2:
-            lines.append(f"CSFloat history: 30d typical ~${w30['avg']:.0f} → thin +{w30_pct_r}% vs buy after fee.")
-        else:
-            lines.append(f"CSFloat history: 30d typical ~${w30['avg']:.0f} → {w30_pct_r:+}% vs buy after fee (weak).")
-
-    # Risk factors
-    if pump > 15:
-        lines.append(f"Price is PUMPED {pump:.0f}% above 30d avg — highly likely to correct during your 7d lock.")
-    if dips_7d > 0:
-        lines.append(f"Price dipped below your buy {dips_7d}x in the last 7 days ({drop_prob}% drop chance over 30d).")
-    if volatility > 12:
-        lines.append(f"Very volatile ({volatility}%) — hard to predict where it lands after 7d lock.")
-    elif volatility > 6:
-        lines.append(f"Moderate volatility ({volatility}%) — some price risk during lock.")
-
-    # 4. Liquidity
-    if liq and isinstance(liq, dict):
-        spd_v = liq.get("spd_7", 0)
-        grade = liq.get("grade", "?")
-        grade_text = {"A": "sells daily — instant flip", "B": "1-3 day wait typical", "C": "may take up to a week", "D": "slow mover, could sit past lock", "F": "illiquid, avoid"}.get(grade, "")
-        lines.append(f"Liquidity grade {grade} ({spd_v}/day) — {grade_text}.")
-
-    # 5. Empire spread
-    if empire and w30:
-        gap = round((w30["avg"] - empire["avg"]) / empire["avg"] * 100, 1)
-        if gap > 5:
-            lines.append(f"Empire avg ${empire['avg']:.0f} vs CSFloat ${w30['avg']:.0f} = {gap:.0f}% spread — solid arbitrage gap.")
-        else:
-            lines.append(f"Empire avg ${empire['avg']:.0f} ({empire['count']} live listings).")
-
+    # Sentence 2: key risk or confirmation + entry target
     if verdict == "BUY":
-        if live_net:
-            max_safe = round(live_net / 1.02, 0)
-            lines.append(f"On {sell_label}: pay ≤ ${max_safe:.0f} to keep ~2% vs today’s net after fee.")
-        elif w30:
-            max_safe = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.02, 0)
-            lines.append(f"No live net — CSFloat 30d net ≈ ${max_safe:.0f} max buy for ~2% if you exit CSFloat.")
+        parts = []
+        if dips_7d == 0 and volatility < 8:
+            parts.append("Price is stable — no dips below your entry this week")
+        elif dips_7d == 0:
+            parts.append(f"No dips below entry this week")
         else:
-            lines.append("Lock in live quote before sizing buy.")
-    elif verdict == "SKIP" and real_pct < 2 and w30:
-        target = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.03, 0)
-        lines.append(f"Need < ${target:.0f} paid (CSFloat 30d net basis) for 3% — skip at ${buy_price:.0f}.")
-    elif verdict == "RISKY" and live_pct is not None and live_pct < 0 and w30:
-        target = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.04, 0)
-        lines.append(f"Live weak — wait or pay < ${target:.0f} (CSFloat-history pad).")
-    elif verdict == "SKIP" and pump > 15:
-        lines.append(f"Pump cooling: aim near CSFloat 30d ~${w30['avg']:.0f} before buying.")
-
+            parts.append(f"Dipped below entry {dips_7d}x this week — some risk")
+        if liq and isinstance(liq, dict):
+            spd_v = liq.get("spd_7", 0)
+            grade = liq.get("grade", "?")
+            grade_text = {"A": "sells daily", "B": "1-3 day wait", "C": "up to a week", "D": "slow mover", "F": "very illiquid"}.get(grade, "")
+            parts.append(f"liquidity {grade} ({spd_v}/day — {grade_text})")
+        if live_net:
+            max_safe = round(live_net / 1.02, 2)
+            parts.append(f"pay up to ${max_safe:.2f} to keep 2%+")
+        elif w30:
+            max_safe = round(w30["avg"] * (1 - CSFLOAT_FEE) / 1.02, 2)
+            parts.append(f"based on 30d history, pay up to ${max_safe:.2f} to keep 2%+")
+        lines.append(". ".join(p[0].upper() + p[1:] for p in parts) + ".")
+    elif verdict == "RISKY":
+        parts = []
+        if dips_7d > 0:
+            parts.append(f"Dipped below your buy price {dips_7d}x in the last 7 days")
+        if pump > 15:
+            parts.append(f"price pumped {pump:.0f}% above 30d avg — likely to correct")
+        if volatility > 8:
+            parts.append(f"volatile ({volatility}%) — hard to predict where it lands after the 7d trade lock")
+        if not parts:
+            parts.append("Profitable on paper but signals are mixed — check the chart before buying")
+        lines.append(". ".join(p[0].upper() + p[1:] for p in parts) + ".")
+    elif verdict == "SKIP":
+        if pump > 15:
+            if w30:
+                lines.append(f"Price pumped {pump:.0f}% above 30d avg — wait for it to cool near ${w30['avg']:.2f} before buying.")
+            else:
+                lines.append(f"Price pumped {pump:.0f}% above 30d avg — wait for correction.")
+        elif w30:
+            w30_net2 = round(w30["avg"] * (1 - CSFLOAT_FEE), 2)
+            target = round(w30_net2 / 1.03, 2)
+            lines.append(f"Not worth it at ${buy_price:.2f}. Based on 30d avg you'd need to pay under ${target:.2f} to clear 3%.")
+        else:
+            lines.append(f"Margins don't clear the minimum threshold at ${buy_price:.2f}.")
     verdict_detail = " ".join(lines) if lines else f"Blend {real_pct}% ({sources_str})."
     verdict_eli5 = _verdict_eli5(verdict, sell_label, live_pct, live_price)
     liquidity_eli5 = _liquidity_eli5(liq)
