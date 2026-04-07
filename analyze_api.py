@@ -184,11 +184,11 @@ def _fetch_parsed_sales(market_hash_name: str) -> list:
 
         if not FLOAT_API_KEY:
             return []
-        for attempt in range(3):
+        for auth_header in [FLOAT_API_KEY, f"Bearer {FLOAT_API_KEY}"]:
             wait_if_needed("float")
             resp = httpx.get(
                 "https://csfloat.com/api/v1/history/sales",
-                headers={"Authorization": FLOAT_API_KEY},
+                headers={"Authorization": auth_header},
                 params={"market_hash_name": market_hash_name, "limit": 1000},
                 timeout=25,
             )
@@ -196,11 +196,7 @@ def _fetch_parsed_sales(market_hash_name: str) -> list:
                 raw = resp.json()
                 rows = raw if isinstance(raw, list) else raw.get("data", raw.get("sales", []))
                 return parse_sales(rows)
-            if resp.status_code in (401, 403) and attempt < 2:
-                _time.sleep(2)
-                continue
-            if resp.status_code == 429 and attempt < 2:
-                _time.sleep(15)
+            if resp.status_code in (401, 403):
                 continue
             return []
     except Exception:

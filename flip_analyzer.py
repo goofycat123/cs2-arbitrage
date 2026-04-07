@@ -68,12 +68,23 @@ def get_history(item_name):
         match = re.search(r'\((\d+)\)', name)
         return int(match.group(1)) if match else None
 
-    # Generic graph endpoint works for all item types including cases, stickers, capsules
-    resp = httpx.get(
-        f"https://csfloat.com/api/v1/history/{quote(item_name)}/graph",
-        headers=FLOAT_HEADERS,
-        timeout=15,
-    )
+    # Try without and with Bearer prefix
+    resp = None
+    for auth_header in [FLOAT_API_KEY, f"Bearer {FLOAT_API_KEY}"]:
+        r = httpx.get(
+            f"https://csfloat.com/api/v1/history/{quote(item_name)}/graph",
+            headers={"Authorization": auth_header},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            resp = r
+            break
+        if r.status_code in (401, 403):
+            continue
+        resp = r
+        break
+    if resp is None:
+        return []
 
     resp.raise_for_status()
     data = resp.json()
