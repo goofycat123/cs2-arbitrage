@@ -5,7 +5,7 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-from config import SELL_VENUES
+from config import FLOAT_API_KEY, SELL_VENUES
 from flip_analyzer import get_history, liquidity_score, CSFLOAT_FEE
 from trend import fetch_float_price, parse_sales
 
@@ -106,12 +106,142 @@ COLLECTIONS = {
 }
 
 
+def _price_cents_to_usd(raw) -> float:
+    if raw is None:
+        return 0.0
+    if isinstance(raw, int):
+        return raw / 100.0
+    return float(raw)
+
+
+def _csfloat_listings_params(market_hash_name: str, float_min, float_max) -> dict:
+    from trend import extract_index
+
+    params: dict = {
+        "limit": 1,
+        "sort_by": "lowest_price",
+        "type": "buy_now",
+    }
+    if "Music Kit" in market_hash_name:
+        params["music_kit_index"] = extract_index(market_hash_name)
+    elif "Sticker" in market_hash_name:
+        params["sticker_index"] = extract_index(market_hash_name)
+    elif "Case" in market_hash_name or "Capsule" in market_hash_name:
+        params["container_index"] = extract_index(market_hash_name)
+    else:
+        params["market_hash_name"] = market_hash_name
+    if float_min is not None:
+        params["min_float"] = float_min
+    if float_max is not None:
+        params["max_float"] = float_max
+    return params
+
+
+def _fetch_csfloat_orderbook_snapshot(
+    market_hash_name: str,
+    float_min=None,
+    float_max=None,
+) -> dict | None:
+    """
+    Cheapest CSFloat buy-now listing and highest buy order on that listing.
+    expected_value_usd = (cheapest_listing + highest_buy) / 2 when a bid exists.
+    """
+    from rate_limiter import wait_if_needed
+
+    if not FLOAT_API_KEY:
+        return None
+
+    params = _csfloat_listings_params(market_hash_name, float_min, float_max)
+    wait_if_needed("float")
+    listings_rows: list | None = None
+    for auth_header in [FLOAT_API_KEY, f"Bearer {FLOAT_API_KEY}"]:
+        try:
+            resp = httpx.get(
+                "https://csfloat.com/api/v1/listings",
+                headers={"Authorization": auth_header},
+                params=params,
+                timeout=12,
+            )
+            if resp.status_code == 200:
+                listings_rows = resp.json().get("data", [])
+                break
+            if resp.status_code == 429:
+                return None
+            if resp.status_code in (401, 403):
+                continue
+        except Exception:
+            continue
+    if not listings_rows:
+        return None
+
+    top = listings_rows[0]
+    p = top.get("price")
+    if p is None:
+        return None
+    cheapest = round(_price_cents_to_usd(p), 2)
+    lid = top.get("id")
+    highest_buy: float | None = None
+    if lid is not None:
+        listing_id = str(lid)
+        wait_if_needed("float")
+        for auth_header in [FLOAT_API_KEY, f"Bearer {FLOAT_API_KEY}"]:
+            try:
+                bo = httpx.get(
+                    f"https://csfloat.com/api/v1/listings/{listing_id}/buy_orders",
+                    headers={"Authorization": auth_header},
+                    params={"limit": 20},
+                    timeout=12,
+                )
+                if bo.status_code != 200:
+                    if bo.status_code in (401, 403):
+                        continue
+                    break
+                j = bo.json()
+                rows = j.get("data", j) if isinstance(j, dict) else j
+                if not isinstance(rows, list):
+                    break
+                prices = []
+                for row in rows:
+                    bp = row.get("price") if isinstance(row, dict) else None
+                    if bp is None and isinstance(row, dict):
+                        bp = row.get("max_price")
+                    if bp is not None:
+                        prices.append(_price_cents_to_usd(bp))
+                if prices:
+                    highest_buy = round(max(prices), 2)
+                break
+            except Exception:
+                break
+
+    ev = round((cheapest + highest_buy) / 2, 2) if highest_buy is not None else None
+    return {
+        "cheapest_listing_usd": cheapest,
+        "highest_buy_usd": highest_buy,
+        "expected_value_usd": ev,
+    }
+
+
+def _indicator_fields(orderbook: dict | None) -> dict:
+    if not orderbook:
+        return {
+            "indicator_cheapest_listing_usd": None,
+            "indicator_highest_buy_usd": None,
+            "indicator_expected_value_usd": None,
+        }
+    return {
+        "indicator_cheapest_listing_usd": orderbook.get("cheapest_listing_usd"),
+        "indicator_highest_buy_usd": orderbook.get("highest_buy_usd"),
+        "indicator_expected_value_usd": orderbook.get("expected_value_usd"),
+    }
+
+
 def _fetch_live_listed_for_venue(
     search_name: str,
     venue: str,
     float_min,
     float_max,
     live_price_override: float | None,
+    csfloat_orderbook: dict | None = None,
 ) -> tuple[float | None, str | None]:
     """Returns (gross_listed_price, error_reason). Price is before marketplace sell fee."""
     if live_price_override is not None:
@@ -120,9 +250,10 @@ def _fetch_live_listed_for_venue(
     if v == "empire":
         emp = _fetch_empire_listings(search_name)
         return (float(emp["floor"]), None) if emp else (None, "No Empire listings found")
-    from config import FLOAT_API_KEY
     if not FLOAT_API_KEY:
         return None, "FLOAT_API_KEY not configured - set it in Railway Variables"
+    if csfloat_orderbook is not None and csfloat_orderbook.get("cheapest_listing_usd") is not None:
+        return csfloat_orderbook["cheapest_listing_usd"], None
     try:
         price = fetch_float_price(search_name, float_min=float_min, float_max=float_max)
         if price is None:
@@ -232,6 +363,19 @@ def _window_stats_from_raw_sales(parsed: list, days: int) -> dict | None:
         "days": days,
         "basis": "sales",
     }
+
+
+def _recent_sales_rows(parsed: list, limit: int = 8) -> list[dict]:
+    """Most recent individual sales for UI display."""
+    if not parsed:
+        return []
+    rows: list[dict] = []
+    for sale in sorted(parsed, key=lambda x: x["ts"], reverse=True)[:limit]:
+        rows.append({
+            "ts": int(sale["ts"]),
+            "price": round(float(sale["price"]), 2),
+        })
+    return rows
 
 
 def _raw_sale_volatility_pct(parsed: list, days: int) -> float | None:
@@ -450,8 +594,9 @@ def run_analysis(
 
     if not has_float:
         # No-float items: return live price only, no history
+        orderbook_nf = _fetch_csfloat_orderbook_snapshot(item_name, None, None) if FLOAT_API_KEY else None
         live_price, live_price_error = _fetch_live_listed_for_venue(
-            item_name, sell_venue, None, None, live_price_override
+            item_name, sell_venue, None, None, live_price_override, csfloat_orderbook=orderbook_nf
         )
         live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
         live_profit = round(live_net - buy_price, 2) if live_net is not None else None
@@ -470,7 +615,8 @@ def run_analysis(
             "sell_venue_label": sell_label,
             "sell_fee_pct": round(sell_fee * 100, 2),
             "w7": None, "w30": None, "w60": None, "w180": None, "liquidity": None, "chart": [],
-            "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}]
+            "trend_notes": [{"text": f"No float value — live {sell_label} quote only", "type": "info"}],
+            **_indicator_fields(orderbook_nf),
         }
 
     # For float items: normal analysis with wear condition
@@ -600,8 +746,9 @@ def run_analysis(
         return {**w, "net_sell": round(net_sell, 2), "profit": round(profit, 2), "pct": round(pct, 1), "buffer": round(buffer, 1)}
 
     # Live sell-side quote (listed/floor before that site’s fee)
+    orderbook = _fetch_csfloat_orderbook_snapshot(search_name, float_min, float_max) if FLOAT_API_KEY else None
     live_price, live_price_error = _fetch_live_listed_for_venue(
-        search_name, sell_venue, float_min, float_max, live_price_override
+        search_name, sell_venue, float_min, float_max, live_price_override, csfloat_orderbook=orderbook
     )
     live_net = round(live_price * (1 - sell_fee), 2) if live_price else None
     live_profit = round(live_net - buy_price, 2) if live_net is not None else None
@@ -862,6 +1009,7 @@ def run_analysis(
 
     cap = min(len(data), 400)
     chart_data = [{"day": d["day"], "avg": round(d["avg_price"] / 100, 2), "sales": d["count"]} for d in data[:cap]]
+    recent_sales = _recent_sales_rows(parsed_sales, limit=8)
 
     return {
         "item": item_name, "buy_price": buy_price,
@@ -873,10 +1021,12 @@ def run_analysis(
         "w180": window_result(w180),
         "liquidity": liq, "pump_pct": pump, "trend_notes": trend_notes,
         "chart": chart_data,
+        "recent_sales": recent_sales,
         "volatility": volatility, "drop_prob": drop_prob,
         "dips_7d": dips_7d, "dips_30d": dips_30d,
         "verdict": verdict, "verdict_detail": verdict_detail,
         "verdict_eli5": verdict_eli5,
         "liquidity_eli5": liquidity_eli5,
         "empire": empire,
+        **_indicator_fields(orderbook),
     }

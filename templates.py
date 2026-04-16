@@ -774,12 +774,36 @@ function windowCard(label, w, buyPrice, livePrice, sellVenueShort) {
   const low_net = (w.low * 0.98).toFixed(2);
   const high_net = (w.high * 0.98).toFixed(2);
   const avg_net = (w.avg * 0.98).toFixed(2);
+  const salesCount = w.sales || 0;
   const liveLbl = sellVenueShort || 'CSFloat';
   return '<div class="card"><h3>' + label + '</h3>' +
-    '<div class="row"><span class="label">Lowest sale <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + low_net + '</span></div>' +
-    '<div class="row"><span class="label">Highest sale <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + high_net + '</span></div>' +
-    '<div class="row"><span class="label">Median / avg <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + avg_net + '</span></div>' +
+    '<div class="row"><span class="label">Low sold <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + low_net + '</span></div>' +
+    '<div class="row"><span class="label">High sold <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + high_net + '</span></div>' +
+    '<div class="row"><span class="label">Median sold <span style="color:#555;font-weight:400">(net 2%)</span></span><span class="val">$' + avg_net + '</span></div>' +
+    '<div class="row"><span class="label">Actual sales</span><span class="val">' + salesCount + '</span></div>' +
     (livePrice ? '<div class="row"><span class="label">Live listed · ' + liveLbl + '</span><span class="val" style="color:#4a9">$' + livePrice.toFixed(2) + '</span></div>' : '') +
+    '</div>';
+}
+
+function timeAgoLabel(ts) {
+  const diff = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (diff < 60) return 'just now';
+  const mins = Math.floor(diff / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return 'about ' + hours + 'h ago';
+  const days = Math.floor(hours / 24);
+  return days + 'd ago';
+}
+
+function recentSalesCard(rows, feePct) {
+  if (!rows || !rows.length) return '';
+  const feeMul = 1 - ((feePct || 2) / 100);
+  return '<div class="card"><h3>Recent Sales</h3>' +
+    rows.slice(0, 6).map(r => {
+      const net = (r.price * feeMul).toFixed(2);
+      return '<div class="row"><span class="label">' + timeAgoLabel(r.ts) + '</span><span class="val">$' + net + '</span></div>';
+    }).join('') +
     '</div>';
 }
 
@@ -907,16 +931,17 @@ async function runAnalyze() {
 
     // History window cards (CSFloat sales, fee already deducted)
     const cf = document.getElementById('cardsFoot');
-    if (d.w7 || d.w30) {
+    if (d.recent_sales?.length || d.w7 || d.w30) {
       document.getElementById('windowCards').innerHTML =
+        recentSalesCard(d.recent_sales || [], d.sell_fee_pct) +
         windowCard('7 Days', d.w7, price, cfPrice, 'CSFloat') +
         windowCard('30 Days', d.w30, price, cfPrice, 'CSFloat') +
         windowCard('60 Days', d.w60, price, cfPrice, 'CSFloat') +
         windowCard('6 Months', d.w180, price, cfPrice, 'CSFloat');
       cf.style.display = 'block';
       cf.textContent = d.verdict === 'INFO'
-        ? 'Price history for this commodity. No float values — all prices are raw market listings.'
-        : 'CSFloat historical sales — all net values already have the 2% fee deducted. Empire has 0% fee so its floor = net.';
+        ? 'Live listing plus latest real sales.'
+        : 'Live listing plus latest real CSFloat sales. Summary boxes below are based on actual sold prints, not fake ask prices.';
     } else {
       document.getElementById('windowCards').innerHTML = '';
       cf.style.display = 'none';
